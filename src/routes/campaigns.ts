@@ -1,5 +1,7 @@
 import { Router, Request, Response } from "express";
 import { Campaign } from "../models/Campaign";
+import { Proposal } from "../models/Proposal";
+import { Donation } from "../models/Donation";
 
 const router = Router();
 
@@ -32,15 +34,29 @@ router.get("/:id", async (req: Request, res: Response) => {
     const campaign = await Campaign.findOne({ campaignId: Number(req.params.id) }).lean();
     if (!campaign) return res.status(404).json({ error: "Campaign not found" });
     res.json(campaign);
-  } catch {
+  } catch (err) {
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // GET /campaigns/:id/proposals — active governance proposals
-router.get("/:id/proposals", async (_req: Request, res: Response) => {
-  // TODO Phase 3: query Proposal model
-  res.json({ proposals: [] });
+router.get("/:id/proposals", async (req: Request, res: Response) => {
+  try {
+    const proposals = await Proposal.find({ campaignId: Number(req.params.id) }).sort({ createdAt: -1 }).lean();
+    res.json(proposals);
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /campaigns/:id/donations — list all donations
+router.get("/:id/donations", async (req: Request, res: Response) => {
+  try {
+    const donations = await Donation.find({ campaignId: Number(req.params.id) }).sort({ timestamp: -1 }).lean();
+    res.json(donations);
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 export default router;

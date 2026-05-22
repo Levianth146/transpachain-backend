@@ -8,18 +8,29 @@ import { Proposal } from "../models/Proposal";
 const CHARITY_CORE_ABI = [
   "event CampaignCreated(uint256 indexed campaignId, address indexed org, uint256 goal, uint256 deadline)",
   "event CampaignStatusChanged(uint256 indexed campaignId, uint8 newStatus)",
+  "event CampaignCancelled(uint256 indexed campaignId, address indexed cancelledBy, uint256 cancelledAt)",
+  "event CampaignFinalized(uint256 indexed campaignId, uint8 finalStatus)",
+  "event OrgVerified(address indexed org, bool verified)",
+  "event DeadlineExtended(uint256 indexed campaignId, uint256 newDeadline)"
 ];
 const VAULT_ABI = [
-  "event DonationReceived(uint256 indexed campaignId, address indexed donor, uint256 amount)",
+  // tokenType: 0 = ETH, 1 = USDC
+  "event DonationReceived(uint256 indexed campaignId, address indexed donor, uint256 amount, uint8 tokenType)",
   "event MilestoneProofSubmitted(uint256 indexed campaignId, uint8 milestoneIndex, string proofCID, uint256 proposalId)",
   "event FundsReleased(uint256 indexed campaignId, uint8 milestoneIndex, uint256 amount, address recipient)",
   "event RefundProcessed(uint256 indexed campaignId, address indexed donor, uint256 amount)",
+  "event PlatformFeeCollected(uint256 indexed campaignId, uint256 feeAmount)",
+  "event TreasuryUpdated(address newTreasury)",
+  "event MaxRefundPeriodUpdated(uint256 newPeriod)",
+  "event EmergencyRefundBatch(uint256 indexed campaignId, uint256 donorCount, uint256 totalAmount)",
 ];
 const DAO_ABI = [
   "event ProposalCreated(uint256 indexed proposalId, uint256 indexed campaignId, uint8 milestoneIndex, string proofCID, uint256 endBlock)",
   "event VoteCast(uint256 indexed proposalId, address indexed voter, uint8 choice, uint256 weight)",
   "event ProposalQueued(uint256 indexed proposalId, uint256 executeAfter)",
   "event ProposalExecuted(uint256 indexed proposalId)",
+  "event ProposalDefeated(uint256 indexed proposalId)",
+  "event ProposalResubmitted(uint256 indexed newProposalId, uint256 indexed oldProposalId)",
 ];
 
 export async function startEventListener(io: IOServer) {
@@ -48,29 +59,56 @@ export async function startEventListener(io: IOServer) {
     io.emit("campaignCreated", { campaignId: Number(campaignId) });
   });
 
+  core.on("CampaignCancelled", async (campaignId, cancelledBy, cancelledAt, event) => {
+    console.log(`[Indexer] CampaignCancelled #${campaignId}`);
+    await Campaign.findOneAndUpdate(
+      { campaignId: Number(campaignId) },
+      { status: 3, cancelledAt: Number(cancelledAt) }
+    );
+    io.emit("campaignCancelled", { campaignId: Number(campaignId) });
+  });
+
+  core.on("CampaignFinalized", async (campaignId, finalStatus, event) => {
+    console.log(`[Indexer] CampaignFinalized #${campaignId} status = ${finalStatus}`);
+    await Campaign.findOneAndUpdate(
+      { campaignId: Number(campaignId) },
+      { status: Number(finalStatus) }
+      // 1 = Successful, 2 = Failed
+    );
+    io.emit("campaignFinalized", { campaignId: Number(campaignId), status: Number(finalStatus) });
+  });
+
   // ─── DonationVault events ──────────────────────────────────
 
-  vault.on("DonationReceived", async (campaignId, donor, amount, event) => {
+  vault.on("DonationReceived", async (campaignId, donor, amount, tokenType, event) => {
     console.log(`[Indexer] DonationReceived campaign #${campaignId} from ${donor}`);
 
     const tx = await event.getTransaction();
+    const existingDonation = await Donation.findOne({ campaignId: Number(campaignId), donor: donor.toLowerCase() });
+    const block = await event.getBlock();
+
     await Donation.create({
       campaignId:  Number(campaignId),
       donor:       donor.toLowerCase(),
       amount:      amount.toString(),
       txHash:      tx.hash,
       blockNumber: event.blockNumber,
+      tokenType:   Number(tokenType), // 0 = ETH, 1 = USDC
+      timestamp:   new Date(Number(block.timestamp) * 1000),
     });
 
-    await Campaign.findOneAndUpdate(
-      { campaignId: Number(campaignId) },
-      { $inc: { donorCount: 1 } }   // approximate — deduplicate in Phase 3
-    );
+    if (!existingDonation) {
+      await Campaign.findOneAndUpdate(
+        { campaignId: Number(campaignId) },
+        { $inc: { donorCount: 1 } }   // approximate — deduplicate in Phase 3
+      );
+    }
 
     io.emit("donationReceived", {
       campaignId: Number(campaignId),
       donor,
       amount: amount.toString(),
+      tokenType: Number(tokenType),
     });
   });
 
@@ -81,6 +119,16 @@ export async function startEventListener(io: IOServer) {
       { $inc: { completedMilestones: 1 } }
     );
     io.emit("fundsReleased", { campaignId: Number(campaignId), milestoneIndex });
+  });
+
+  vault.on("RefundProcessed", async (campaignId, donor, amount, event) => {
+    console.log(`[Indexer] RefundProcessed campaign #${campaignId} donor ${donor}`);
+    // Update donation status to refunded
+    await Donation.updateMany(
+      { campaignId: Number(campaignId), donor: donor.toLowerCase() },
+      { status: "refunded" }
+    );
+    io.emit("refundProcessed", { campaignId: Number(campaignId), donor, amount: amount.toString() });
   });
 
   // ─── GovernanceDAO events ──────────────────────────────────
@@ -107,6 +155,24 @@ export async function startEventListener(io: IOServer) {
   dao.on("ProposalExecuted", async (proposalId) => {
     await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, { state: 4 });
     io.emit("proposalExecuted", { proposalId: Number(proposalId) });
+  });
+  dao.on("VoteCast", async (proposalId, voter, choice, weight, event) => {
+    console.log(`[Indexer] VoteCast proposal #${proposalId} by ${voter}`);
+    // Choice: 0 = Against, 1 = For, 2 = Abstain
+    const update = choice === 1n
+      ? { $inc: { forVotes: Number(weight) } }
+      : choice === 0n
+      ? { $inc: { againstVotes: Number(weight) } }
+      : { $inc: { abstainVotes: Number(weight) } };
+
+    await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, update);
+    io.emit("voteCast", { proposalId: Number(proposalId), voter, choice: Number(choice), weight: weight.toString(), });
+  });
+
+  dao.on("ProposalDefeated", async (proposalId) => {
+    await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, { state: 2 } // Defeated 
+  );
+  io.emit("proposalDefeated", { proposalId: Number(proposalId) });
   });
 
   console.log("[Indexer] Listening to Sepolia events...");

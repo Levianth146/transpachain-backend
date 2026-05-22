@@ -18,6 +18,8 @@ export interface ICampaign extends Document {
   donorCount:   number;
   createdAt:    Date;
   updatedAt:    Date;
+  cancelledAt:  number;
+  paymentToken: number;
 }
 
 const CampaignSchema = new Schema<ICampaign>(
@@ -37,6 +39,8 @@ const CampaignSchema = new Schema<ICampaign>(
     totalMilestones:     { type: Number, required: true },
     completedMilestones: { type: Number, default: 0 },
     donorCount:          { type: Number, default: 0 },
+    cancelledAt:         { type: Number, default: 0 },
+    paymentToken:        { type: Number, default: 0},
   },
   { timestamps: true }
 );

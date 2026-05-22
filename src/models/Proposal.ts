@@ -6,8 +6,9 @@ export interface IProposal extends Document {
   milestoneIndex: number;
   proofCID:       string;
   state:          number;  // ProposalState enum
-  forVotes:       string;
-  againstVotes:   string;
+  forVotes:       number;
+  againstVotes:   number;
+  abstainVotes:   number;
   endBlock:       number;
   executeAfter:   number;
   txHash:         string;
@@ -21,8 +22,9 @@ const ProposalSchema = new Schema<IProposal>(
     milestoneIndex: { type: Number, required: true },
     proofCID:       { type: String, required: true },
     state:          { type: Number, default: 1 },  // 1 = Active
-    forVotes:       { type: String, default: "0" },
-    againstVotes:   { type: String, default: "0" },
+    forVotes:       { type: Number, default: 0 },
+    againstVotes:   { type: Number, default: 0 },
+    abstainVotes:   { type: Number, default: 0 },
     endBlock:       { type: Number, required: true },
     executeAfter:   { type: Number, default: 0 },
     txHash:         { type: String, required: true },

@@ -7,6 +7,8 @@ export interface IDonation extends Document {
   txHash:     string;
   blockNumber: number;
   timestamp:  Date;
+  tokenType: number;
+  status: string;
 }
 
 const DonationSchema = new Schema<IDonation>({
@@ -16,6 +18,8 @@ const DonationSchema = new Schema<IDonation>({
   txHash:      { type: String, required: true, unique: true },
   blockNumber: { type: Number, required: true },
   timestamp:   { type: Date,   default: Date.now },
+  tokenType:   { type: Number, default: 0}, // 0 = ETH, 1 = USDC
+  status:      { type: String, default: "locked", enum: ["locked", "released", "refunded"] },   
 });
 
 export const Donation = model<IDonation>("Donation", DonationSchema);
