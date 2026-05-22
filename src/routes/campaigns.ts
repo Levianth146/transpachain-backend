@@ -28,6 +28,23 @@ router.get("/", async (req: Request, res: Response) => {
   }
 });
 
+// GET /campaigns/stats — platform statistics
+router.get("/stats", async (req: Request, res: Response) => {
+  try {
+    const [totalCampaigns, activeCampaigns, totalDonations, totalUniqueDonors] = await Promise.all([
+      Campaign.countDocuments(),
+      Campaign.countDocuments({ status: 0 }),   // 0 = Active
+      Donation.find().lean(),
+      Donation.distinct("donor"),
+    ]);
+    const totalDonated = totalDonations.reduce((acc, d) => acc + BigInt(d.amount), 0n ).toString();
+    const countUniqueDonors = totalUniqueDonors.length;
+    res.json({ totalCampaigns, activeCampaigns, totalDonated, countUniqueDonors })
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // GET /campaigns/:id
 router.get("/:id", async (req: Request, res: Response) => {
   try {
