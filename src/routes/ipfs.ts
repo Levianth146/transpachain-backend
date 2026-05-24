@@ -50,4 +50,17 @@ router.post("/upload", upload.single("file") ,async (req: Request, res: Response
   }
 });
 
+// GET /ipfs/:cid — proxy fetch IPFS metadata (avoids CORS in browser)
+router.get("/:cid", async (req: Request, res: Response) => {
+  try {
+    const gatewayUrl = `https://gateway.pinata.cloud/ipfs/${req.params.cid}`;
+    const response   = await fetch(gatewayUrl);
+    if (!response.ok) return res.status(404).json({ error: "CID not found" });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch from IPFS" });
+  }
+});
+
 export default router;
