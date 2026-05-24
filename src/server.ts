@@ -9,7 +9,6 @@ import campaignRoutes  from "./routes/campaigns";
 import donationRoutes  from "./routes/donations";
 import ipfsRoutes      from "./routes/ipfs";
 import { startEventListener } from "./indexer/eventListener";
-import { donationRouter, ipfsRouter as ipfsProxyRouter } from "./routes/other";
 
 dotenv.config();
 
@@ -28,8 +27,6 @@ app.get("/health", (_req, res) => res.json({ status: "ok", chain: "sepolia" }));
 app.use("/campaigns",  campaignRoutes);
 app.use("/donations",  donationRoutes);
 app.use("/ipfs",       ipfsRoutes);
-app.use("/donors",     donationRouter);  // GET /donors/:address — donations by wallet
-app.use("/ipfs",       ipfsProxyRouter); // GET /ipfs/:cid — IPFS proxy
 
 // ─── Socket.io ────────────────────────────────────────────────
 io.on("connection", (socket) => {
