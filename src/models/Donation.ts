@@ -16,7 +16,7 @@ const DonationSchema = new Schema<IDonation>({
   donor:       { type: String, required: true, index: true },
   amount:      { type: String, required: true },
   txHash:      { type: String, required: true, unique: true },
-  blockNumber: { type: Number, required: true },
+  blockNumber: { type: Number, default: 0 },
   timestamp:   { type: Date,   default: Date.now },
   tokenType:   { type: Number, default: 0}, // 0 = ETH, 1 = USDC
   status:      { type: String, default: "locked", enum: ["locked", "released", "refunded"] },   
