@@ -20,7 +20,7 @@ const ProposalSchema = new Schema<IProposal>(
     proposalId:     { type: Number, required: true, unique: true, index: true },
     campaignId:     { type: Number, required: true, index: true },
     milestoneIndex: { type: Number, required: true },
-    proofCID:       { type: String, required: true },
+    proofCID:       { type: String, default: "" },
     state:          { type: Number, default: 1 },  // 1 = Active
     forVotes:       { type: Number, default: 0 },
     againstVotes:   { type: Number, default: 0 },

@@ -109,7 +109,7 @@ async function main () {
           proposalId:     1,
           campaignId:     2,
           milestoneIndex: 1,
-          proofCID:       "QmProofTurkey_M1",
+          proofCID:       "",
           state:          1,  // Active
           forVotes:       3000000000000000000,
           againstVotes:   0,
@@ -123,7 +123,7 @@ async function main () {
           proposalId:     2,
           campaignId:     3,
           milestoneIndex: 0,
-          proofCID:       "QmProofBangladesh_M0",
+          proofCID:       "",
           state:          4,  // Executed
           forVotes:       3000000000000000000,
           againstVotes:   0,
@@ -137,7 +137,7 @@ async function main () {
           proposalId:     3,
           campaignId:     3,
           milestoneIndex: 1,
-          proofCID:       "QmProofBangladesh_M1",
+          proofCID:       "",
           state:          4,  // Executed
           forVotes:       3000000000000000000,
           againstVotes:   0,

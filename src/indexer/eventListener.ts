@@ -44,15 +44,53 @@ export async function startEventListener(io: IOServer) {
 
   core.on("CampaignCreated", async (campaignId, org, goal, deadline, event) => {
     console.log(`[Indexer] CampaignCreated #${campaignId}`);
+
+    // Fetch full campaign data from contract
+    const CHARITY_CORE_FULL_ABI = [
+      "function getCampaign(uint256) view returns (tuple(uint256,address,string,uint256,uint256,uint256,uint8,uint8,uint8,uint8,string,uint256,uint256))"
+    ];
+    const coreContract = new ethers.Contract(process.env.CHARITY_CORE_ADDRESS!, CHARITY_CORE_FULL_ABI, provider);
+    const campaignData = await coreContract.getCampaign(Number(campaignId));
+    const metadataCID = campaignData[2];
+
+    // Fetch metadata from IPFS
+    let title = "", description = "", category = "general", imageUrl = "", orgName = "";
+    let totalMilestones = Number(campaignData[7]);
+    let paymentToken = Number(campaignData[9]);
+
+    if (metadataCID) {
+      try {
+        const ipfsRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCID}`);
+        if (ipfsRes.ok) {
+          const meta = await ipfsRes.json() as any;
+          title       = meta.title       || "";
+          description = meta.description || "";
+          category    = meta.category    || "general";
+          imageUrl    = meta.imageUrl    || "";
+          orgName     = meta.orgName     || "";
+        }
+      } catch (e) {
+        console.warn(`[Indexer] Failed to fetch IPFS metadata for campaign #${campaignId}`);
+      }
+    }
+
     await Campaign.findOneAndUpdate(
       { campaignId: Number(campaignId) },
       {
         campaignId:      Number(campaignId),
         orgAddress:      org.toLowerCase(),
-        metadataCID:     "",   // fetched separately from IPFS
+        metadataCID,
+        title,
+        description,
+        category,
+        imageUrl,
+        orgName,
         goalAmount:      goal.toString(),
+        raisedAmount:    "0",
         deadline:        Number(deadline),
-        totalMilestones: 0,   // updated from contract read
+        totalMilestones,
+        paymentToken,
+        status:          0,
       },
       { upsert: true, new: true }
     );
