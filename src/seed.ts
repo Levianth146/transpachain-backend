@@ -83,20 +83,20 @@ async function main () {
       // ── Donations ─────────────────────────────────────────────────
       const donations = await Donation.insertMany([
         // Campaign 1 — Kenya
-        { campaignId: 1, donor: "0xd001000000000000000000000000000000000001", amount: "500000000000000000", txHash: "0xdemo_tx_001", blockNumber: 8000001, tokenType: 0, status: "locked" },
+        { campaignId: 1, donor: "0xa7ac8154fa3019f5e95ba3720240c782c0e3ed70", amount: "500000000000000000", txHash: "0xdemo_tx_001", blockNumber: 8000001, tokenType: 0, status: "locked" },
         { campaignId: 1, donor: "0xd002000000000000000000000000000000000002", amount: "300000000000000000", txHash: "0xdemo_tx_002", blockNumber: 8000050, tokenType: 0, status: "locked" },
         { campaignId: 1, donor: "0xd003000000000000000000000000000000000003", amount: "200000000000000000", txHash: "0xdemo_tx_003", blockNumber: 8000100, tokenType: 0, status: "locked" },
         { campaignId: 1, donor: "0xd004000000000000000000000000000000000004", amount: "100000000000000000", txHash: "0xdemo_tx_004", blockNumber: 8000150, tokenType: 0, status: "locked" },
         { campaignId: 1, donor: "0xd005000000000000000000000000000000000005", amount: "100000000000000000", txHash: "0xdemo_tx_005", blockNumber: 8000200, tokenType: 0, status: "locked" },
     
         // Campaign 2 — Turkey
-        { campaignId: 2, donor: "0xd001000000000000000000000000000000000001", amount: "1000000000000000000", txHash: "0xdemo_tx_006", blockNumber: 8001001, tokenType: 0, status: "released" },
+        { campaignId: 2, donor: "0xa7ac8154fa3019f5e95ba3720240c782c0e3ed70", amount: "1000000000000000000", txHash: "0xdemo_tx_006", blockNumber: 8001001, tokenType: 0, status: "released" },
         { campaignId: 2, donor: "0xd002000000000000000000000000000000000002", amount: "1000000000000000000", txHash: "0xdemo_tx_007", blockNumber: 8001050, tokenType: 0, status: "released" },
         { campaignId: 2, donor: "0xd006000000000000000000000000000000000006", amount: "2000000000000000000", txHash: "0xdemo_tx_008", blockNumber: 8001100, tokenType: 0, status: "released" },
         { campaignId: 2, donor: "0xd007000000000000000000000000000000000007", amount: "1000000000000000000", txHash: "0xdemo_tx_009", blockNumber: 8001150, tokenType: 0, status: "locked" },
     
         // Campaign 3 — Bangladesh
-        { campaignId: 3, donor: "0xd001000000000000000000000000000000000001", amount: "1000000000000000000", txHash: "0xdemo_tx_010", blockNumber: 8002001, tokenType: 0, status: "released" },
+        { campaignId: 3, donor: "0xa7ac8154fa3019f5e95ba3720240c782c0e3ed70", amount: "1000000000000000000", txHash: "0xdemo_tx_010", blockNumber: 8002001, tokenType: 0, status: "released" },
         { campaignId: 3, donor: "0xd003000000000000000000000000000000000003", amount: "500000000000000000", txHash: "0xdemo_tx_011", blockNumber: 8002050, tokenType: 0, status: "released" },
         { campaignId: 3, donor: "0xd008000000000000000000000000000000000008", amount: "1500000000000000000", txHash: "0xdemo_tx_012", blockNumber: 8002100, tokenType: 0, status: "released" },
       ]);
