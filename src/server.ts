@@ -8,6 +8,7 @@ import dotenv  from "dotenv";
 import campaignRoutes  from "./routes/campaigns";
 import donationRoutes  from "./routes/donations";
 import ipfsRoutes      from "./routes/ipfs";
+import adminRoutes     from "./routes/admin";
 import { startEventListener } from "./indexer/eventListener";
 
 dotenv.config();
@@ -27,6 +28,7 @@ app.get("/health", (_req, res) => res.json({ status: "ok", chain: "sepolia" }));
 app.use("/campaigns",  campaignRoutes);
 app.use("/donations",  donationRoutes);
 app.use("/ipfs",       ipfsRoutes);
+app.use("/admin",      adminRoutes);
 
 // ─── Socket.io ────────────────────────────────────────────────
 io.on("connection", (socket) => {

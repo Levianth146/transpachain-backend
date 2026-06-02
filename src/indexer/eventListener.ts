@@ -3,6 +3,7 @@ import { Server as IOServer } from "socket.io";
 import { Campaign } from "../models/Campaign";
 import { Donation } from "../models/Donation";
 import { Proposal } from "../models/Proposal";
+import { VerifiedOrg }  from "../models/VerifiedOrg";
 
 // Minimal ABIs for event listening
 const CHARITY_CORE_ABI = [
@@ -14,7 +15,6 @@ const CHARITY_CORE_ABI = [
   "event DeadlineExtended(uint256 indexed campaignId, uint256 newDeadline)"
 ];
 const VAULT_ABI = [
-  // tokenType: 0 = ETH, 1 = USDC
   "event DonationReceived(uint256 indexed campaignId, address indexed donor, uint256 amount, uint8 tokenType)",
   "event MilestoneProofSubmitted(uint256 indexed campaignId, uint8 milestoneIndex, string proofCID, uint256 proposalId)",
   "event FundsReleased(uint256 indexed campaignId, uint8 milestoneIndex, uint256 amount, address recipient)",
@@ -32,32 +32,30 @@ const DAO_ABI = [
   "event ProposalDefeated(uint256 indexed proposalId)",
   "event ProposalResubmitted(uint256 indexed newProposalId, uint256 indexed oldProposalId)",
 ];
-
+ 
 export async function startEventListener(io: IOServer) {
   const provider = new ethers.JsonRpcProvider(process.env.ALCHEMY_SEPOLIA_URL);
-
+ 
   const core  = new ethers.Contract(process.env.CHARITY_CORE_ADDRESS!, CHARITY_CORE_ABI, provider);
   const vault = new ethers.Contract(process.env.DONATION_VAULT_ADDRESS!, VAULT_ABI, provider);
   const dao   = new ethers.Contract(process.env.GOVERNANCE_DAO_ADDRESS!, DAO_ABI, provider);
-
+ 
   // ─── CharityCore events ────────────────────────────────────
-
+ 
   core.on("CampaignCreated", async (campaignId, org, goal, deadline, event) => {
     console.log(`[Indexer] CampaignCreated #${campaignId}`);
-
-    // Fetch full campaign data from contract
+ 
     const CHARITY_CORE_FULL_ABI = [
       "function getCampaign(uint256) view returns (tuple(uint256,address,string,uint256,uint256,uint256,uint8,uint8,uint8,uint8,string,uint256,uint256))"
     ];
     const coreContract = new ethers.Contract(process.env.CHARITY_CORE_ADDRESS!, CHARITY_CORE_FULL_ABI, provider);
     const campaignData = await coreContract.getCampaign(Number(campaignId));
     const metadataCID = campaignData[2];
-
-    // Fetch metadata from IPFS
+ 
     let title = "", description = "", category = "general", imageUrl = "", orgName = "";
     let totalMilestones = Number(campaignData[7]);
     let paymentToken = Number(campaignData[9]);
-
+ 
     if (metadataCID) {
       try {
         const ipfsRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCID}`);
@@ -73,7 +71,7 @@ export async function startEventListener(io: IOServer) {
         console.warn(`[Indexer] Failed to fetch IPFS metadata for campaign #${campaignId}`);
       }
     }
-
+ 
     await Campaign.findOneAndUpdate(
       { campaignId: Number(campaignId) },
       {
@@ -96,7 +94,7 @@ export async function startEventListener(io: IOServer) {
     );
     io.emit("campaignCreated", { campaignId: Number(campaignId) });
   });
-
+ 
   core.on("CampaignCancelled", async (campaignId, cancelledBy, cancelledAt, event) => {
     console.log(`[Indexer] CampaignCancelled #${campaignId}`);
     await Campaign.findOneAndUpdate(
@@ -105,43 +103,63 @@ export async function startEventListener(io: IOServer) {
     );
     io.emit("campaignCancelled", { campaignId: Number(campaignId) });
   });
-
+ 
   core.on("CampaignFinalized", async (campaignId, finalStatus, event) => {
     console.log(`[Indexer] CampaignFinalized #${campaignId} status = ${finalStatus}`);
     await Campaign.findOneAndUpdate(
       { campaignId: Number(campaignId) },
       { status: Number(finalStatus) }
-      // 1 = Successful, 2 = Failed
     );
     io.emit("campaignFinalized", { campaignId: Number(campaignId), status: Number(finalStatus) });
   });
-
+ 
+  // ─── OrgVerified ────────────────────────────────────
+  core.on("OrgVerified", async (org: string, verified: boolean, event: ethers.EventLog) => {
+    console.log(`[Indexer] OrgVerified ${org} verified=${verified}`);
+    try {
+      const tx = await event.getTransaction();
+      await VerifiedOrg.findOneAndUpdate(
+        { address: org.toLowerCase() },
+        {
+          address:     org.toLowerCase(),
+          verified,
+          txHash:      tx.hash,
+          blockNumber: event.blockNumber,
+        },
+        { upsert: true, new: true }
+      );
+      io.emit("orgVerified", { org, verified });
+    } catch (e) {
+      console.error("[Indexer] OrgVerified error:", e);
+    }
+  });
+ 
   // ─── DonationVault events ──────────────────────────────────
-
+ 
   vault.on("DonationReceived", async (campaignId, donor, amount, tokenType, event) => {
     console.log(`[Indexer] DonationReceived campaign #${campaignId} from ${donor}`);
-
+ 
     const tx = await event.getTransaction();
     const existingDonation = await Donation.findOne({ campaignId: Number(campaignId), donor: donor.toLowerCase() });
     const block = await event.getBlock();
-
+ 
     await Donation.create({
       campaignId:  Number(campaignId),
       donor:       donor.toLowerCase(),
       amount:      amount.toString(),
       txHash:      tx.hash,
       blockNumber: event.blockNumber,
-      tokenType:   Number(tokenType), // 0 = ETH, 1 = USDC
+      tokenType:   Number(tokenType),
       timestamp:   new Date(Number(block.timestamp) * 1000),
     });
-
+ 
     if (!existingDonation) {
       await Campaign.findOneAndUpdate(
         { campaignId: Number(campaignId) },
-        { $inc: { donorCount: 1 } }   // approximate — deduplicate in Phase 3
+        { $inc: { donorCount: 1 } }
       );
     }
-
+ 
     io.emit("donationReceived", {
       campaignId: Number(campaignId),
       donor,
@@ -149,7 +167,7 @@ export async function startEventListener(io: IOServer) {
       tokenType: Number(tokenType),
     });
   });
-
+ 
   vault.on("FundsReleased", async (campaignId, milestoneIndex, amount, recipient, event) => {
     console.log(`[Indexer] FundsReleased campaign #${campaignId} milestone ${milestoneIndex}`);
     await Campaign.findOneAndUpdate(
@@ -158,19 +176,18 @@ export async function startEventListener(io: IOServer) {
     );
     io.emit("fundsReleased", { campaignId: Number(campaignId), milestoneIndex });
   });
-
+ 
   vault.on("RefundProcessed", async (campaignId, donor, amount, event) => {
     console.log(`[Indexer] RefundProcessed campaign #${campaignId} donor ${donor}`);
-    // Update donation status to refunded
     await Donation.updateMany(
       { campaignId: Number(campaignId), donor: donor.toLowerCase() },
       { status: "refunded" }
     );
     io.emit("refundProcessed", { campaignId: Number(campaignId), donor, amount: amount.toString() });
   });
-
+ 
   // ─── GovernanceDAO events ──────────────────────────────────
-
+ 
   dao.on("ProposalCreated", async (proposalId, campaignId, milestoneIndex, proofCID, endBlock, event) => {
     console.log(`[Indexer] ProposalCreated #${proposalId}`);
     const tx = await event.getTransaction();
@@ -184,34 +201,32 @@ export async function startEventListener(io: IOServer) {
     });
     io.emit("proposalCreated", { proposalId: Number(proposalId), campaignId: Number(campaignId) });
   });
-
+ 
   dao.on("ProposalQueued", async (proposalId, executeAfter) => {
     await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, { state: 3, executeAfter: Number(executeAfter) });
     io.emit("proposalQueued", { proposalId: Number(proposalId) });
   });
-
+ 
   dao.on("ProposalExecuted", async (proposalId) => {
     await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, { state: 4 });
     io.emit("proposalExecuted", { proposalId: Number(proposalId) });
   });
+ 
   dao.on("VoteCast", async (proposalId, voter, choice, weight, event) => {
     console.log(`[Indexer] VoteCast proposal #${proposalId} by ${voter}`);
-    // Choice: 0 = Against, 1 = For, 2 = Abstain
     const update = choice === 1n
       ? { $inc: { forVotes: Number(weight) } }
       : choice === 0n
       ? { $inc: { againstVotes: Number(weight) } }
       : { $inc: { abstainVotes: Number(weight) } };
-
     await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, update);
-    io.emit("voteCast", { proposalId: Number(proposalId), voter, choice: Number(choice), weight: weight.toString(), });
+    io.emit("voteCast", { proposalId: Number(proposalId), voter, choice: Number(choice), weight: weight.toString() });
   });
-
+ 
   dao.on("ProposalDefeated", async (proposalId) => {
-    await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, { state: 2 } // Defeated 
-  );
-  io.emit("proposalDefeated", { proposalId: Number(proposalId) });
+    await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, { state: 2 });
+    io.emit("proposalDefeated", { proposalId: Number(proposalId) });
   });
-
+ 
   console.log("[Indexer] Listening to Sepolia events...");
 }

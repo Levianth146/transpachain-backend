@@ -32,8 +32,8 @@ router.get("/", async (req: Request, res: Response) => {
 router.get("/stats", async (req: Request, res: Response) => {
   try {
     const [totalCampaigns, activeCampaigns, totalDonations, totalUniqueDonors] = await Promise.all([
-      Campaign.countDocuments(),
-      Campaign.countDocuments({ status: 0 }),   // 0 = Active
+      Campaign.countDocuments({ title: { $exists: true, $ne: "" } }),
+      Campaign.countDocuments({ status: 0, title: { $exists: true, $ne: "" } }),   // 0 = Active
       Donation.find().lean(),
       Donation.distinct("donor"),
     ]);
