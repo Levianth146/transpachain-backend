@@ -1,6 +1,7 @@
 import express from "express";
 import cors    from "cors";
 import http    from "http";
+import rateLimit from "express-rate-limit";
 import { Server as IOServer } from "socket.io";
 import mongoose from "mongoose";
 import dotenv  from "dotenv";
@@ -10,18 +11,28 @@ import donationRoutes  from "./routes/donations";
 import ipfsRoutes      from "./routes/ipfs";
 import adminRoutes     from "./routes/admin";
 import { startEventListener } from "./indexer/eventListener";
+import { errorHandler } from "./middleware/errorHandler";
 
 dotenv.config();
 
 const app    = express();
 const server = http.createServer(app);
+const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:3000";
 const io     = new IOServer(server, {
-  cors: { origin: process.env.CORS_ORIGIN || "http://localhost:3000" }
+  cors: { origin: corsOrigin }
 });
 
 // ─── Middleware ────────────────────────────────────────────────
-app.use(cors({ origin: process.env.CORS_ORIGIN || "http://localhost:3000" }));
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+  })
+);
 
 // ─── Routes ───────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ status: "ok", chain: "sepolia" }));
@@ -29,6 +40,7 @@ app.use("/campaigns",  campaignRoutes);
 app.use("/donations",  donationRoutes);
 app.use("/ipfs",       ipfsRoutes);
 app.use("/admin",      adminRoutes);
+app.use(errorHandler);
 
 // ─── Socket.io ────────────────────────────────────────────────
 io.on("connection", (socket) => {

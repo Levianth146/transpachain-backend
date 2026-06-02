@@ -39,6 +39,13 @@ export async function startEventListener(io: IOServer) {
   const core  = new ethers.Contract(process.env.CHARITY_CORE_ADDRESS!, CHARITY_CORE_ABI, provider);
   const vault = new ethers.Contract(process.env.DONATION_VAULT_ADDRESS!, VAULT_ABI, provider);
   const dao   = new ethers.Contract(process.env.GOVERNANCE_DAO_ADDRESS!, DAO_ABI, provider);
+
+  const fromBlock = Number(process.env.DEPLOY_FROM_BLOCK || 0);
+  if (fromBlock > 0) {
+    const current = await provider.getBlockNumber();
+    const { runHistoricalBackfill } = await import("./historicalSync");
+    await runHistoricalBackfill(provider, { core, vault, dao }, fromBlock, current);
+  }
  
   // ─── CharityCore events ────────────────────────────────────
  
