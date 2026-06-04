@@ -31,6 +31,31 @@ async function fetchCampaignMeta(metadataCID: string) {
   return { title, description, category, imageUrl, orgName };
 }
 
+/** Alchemy free tier allows ~10 blocks per eth_getLogs; override via INDEXER_LOG_CHUNK_SIZE. */
+const LOG_CHUNK_SIZE = Math.max(
+  1,
+  Number(process.env.INDEXER_LOG_CHUNK_SIZE || 10)
+);
+
+async function queryFilterChunked(
+  contract: ethers.Contract,
+  filter: ethers.ContractEventName,
+  fromBlock: number,
+  toBlock: number
+): Promise<ethers.Log[]> {
+  const logs: ethers.Log[] = [];
+  for (let start = fromBlock; start <= toBlock; start += LOG_CHUNK_SIZE) {
+    const end = Math.min(start + LOG_CHUNK_SIZE - 1, toBlock);
+    const chunk = await contract.queryFilter(filter, start, end);
+    logs.push(...chunk);
+    if ((end - fromBlock) % (LOG_CHUNK_SIZE * 100) < LOG_CHUNK_SIZE) {
+      process.stdout.write(`\r[Indexer] Scanned through block ${end} (${logs.length} logs)   `);
+    }
+  }
+  if (toBlock > fromBlock) process.stdout.write("\n");
+  return logs;
+}
+
 /**
  * Backfill indexed data from DEPLOY_FROM_BLOCK using queryFilter.
  */
@@ -59,10 +84,10 @@ export async function runHistoricalBackfill(
   const orgFilter = core.filters.OrgVerified();
 
   const [campaignLogs, donationLogs, proposalLogs, orgLogs] = await Promise.all([
-    core.queryFilter(campaignFilter, fromBlock, toBlock),
-    vault.queryFilter(donationFilter, fromBlock, toBlock),
-    dao.queryFilter(proposalFilter, fromBlock, toBlock),
-    core.queryFilter(orgFilter, fromBlock, toBlock),
+    queryFilterChunked(core, campaignFilter, fromBlock, toBlock),
+    queryFilterChunked(vault, donationFilter, fromBlock, toBlock),
+    queryFilterChunked(dao, proposalFilter, fromBlock, toBlock),
+    queryFilterChunked(core, orgFilter, fromBlock, toBlock),
   ]);
 
   for (const log of campaignLogs) {

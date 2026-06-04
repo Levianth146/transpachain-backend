@@ -42,9 +42,17 @@ export async function startEventListener(io: IOServer) {
 
   const fromBlock = Number(process.env.DEPLOY_FROM_BLOCK || 0);
   if (fromBlock > 0) {
-    const current = await provider.getBlockNumber();
-    const { runHistoricalBackfill } = await import("./historicalSync");
-    await runHistoricalBackfill(provider, { core, vault, dao }, fromBlock, current);
+    try {
+      const current = await provider.getBlockNumber();
+      const { runHistoricalBackfill } = await import("./historicalSync");
+      await runHistoricalBackfill(provider, { core, vault, dao }, fromBlock, current);
+    } catch (err) {
+      console.error(
+        "[Indexer] Historical backfill failed — live indexing continues. " +
+          "Use deploy block for DEPLOY_FROM_BLOCK or INDEXER_LOG_CHUNK_SIZE=10 on Alchemy free:",
+        err
+      );
+    }
   }
  
   // ─── CharityCore events ────────────────────────────────────
