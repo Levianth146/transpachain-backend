@@ -119,6 +119,15 @@ export async function startEventListener(io: IOServer) {
     io.emit("campaignCancelled", { campaignId: Number(campaignId) });
   });
  
+  core.on("CampaignStatusChanged", async (campaignId, newStatus) => {
+    console.log(`[Indexer] CampaignStatusChanged #${campaignId} status = ${newStatus}`);
+    await Campaign.findOneAndUpdate(
+      { campaignId: Number(campaignId) },
+      { status: Number(newStatus) }
+    );
+    io.emit("campaignStatusChanged", { campaignId: Number(campaignId), status: Number(newStatus) });
+  });
+
   core.on("CampaignFinalized", async (campaignId, finalStatus, event) => {
     console.log(`[Indexer] CampaignFinalized #${campaignId} status = ${finalStatus}`);
     await Campaign.findOneAndUpdate(
@@ -126,6 +135,15 @@ export async function startEventListener(io: IOServer) {
       { status: Number(finalStatus) }
     );
     io.emit("campaignFinalized", { campaignId: Number(campaignId), status: Number(finalStatus) });
+  });
+
+  core.on("DeadlineExtended", async (campaignId, newDeadline) => {
+    console.log(`[Indexer] DeadlineExtended #${campaignId}`);
+    await Campaign.findOneAndUpdate(
+      { campaignId: Number(campaignId) },
+      { deadline: Number(newDeadline) }
+    );
+    io.emit("deadlineExtended", { campaignId: Number(campaignId), deadline: Number(newDeadline) });
   });
  
   // ─── OrgVerified ────────────────────────────────────
@@ -174,13 +192,23 @@ export async function startEventListener(io: IOServer) {
         { $inc: { donorCount: 1 } }
       );
     }
- 
+
+    const camp = await Campaign.findOne({ campaignId: Number(campaignId) });
+    if (camp) {
+      const newRaised = (BigInt(camp.raisedAmount || "0") + BigInt(amount.toString())).toString();
+      await Campaign.findOneAndUpdate(
+        { campaignId: Number(campaignId) },
+        { raisedAmount: newRaised }
+      );
+    }
+
     io.emit("donationReceived", {
       campaignId: Number(campaignId),
       donor,
       amount: amount.toString(),
       tokenType: Number(tokenType),
     });
+    io.emit("campaignUpdated", { campaignId: Number(campaignId) });
   });
  
   vault.on("FundsReleased", async (campaignId, milestoneIndex, amount, recipient, event) => {
@@ -242,6 +270,14 @@ export async function startEventListener(io: IOServer) {
     await Proposal.findOneAndUpdate({ proposalId: Number(proposalId) }, { state: 2 });
     io.emit("proposalDefeated", { proposalId: Number(proposalId) });
   });
- 
+
+  dao.on("ProposalResubmitted", async (newProposalId, oldProposalId) => {
+    await Proposal.findOneAndUpdate({ proposalId: Number(oldProposalId) }, { state: 2 });
+    io.emit("proposalResubmitted", {
+      newProposalId: Number(newProposalId),
+      oldProposalId: Number(oldProposalId),
+    });
+  });
+
   console.log("[Indexer] Listening to Sepolia events...");
 }

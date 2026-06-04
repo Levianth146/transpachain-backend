@@ -10,6 +10,8 @@ import campaignRoutes  from "./routes/campaigns";
 import donationRoutes  from "./routes/donations";
 import ipfsRoutes      from "./routes/ipfs";
 import adminRoutes     from "./routes/admin";
+import orgRoutes       from "./routes/orgs";
+import proposalRoutes  from "./routes/proposals";
 import { startEventListener } from "./indexer/eventListener";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -40,6 +42,8 @@ app.use("/campaigns",  campaignRoutes);
 app.use("/donations",  donationRoutes);
 app.use("/ipfs",       ipfsRoutes);
 app.use("/admin",      adminRoutes);
+app.use("/orgs",       orgRoutes);
+app.use("/proposals",  proposalRoutes);
 app.use(errorHandler);
 
 // ─── Socket.io ────────────────────────────────────────────────

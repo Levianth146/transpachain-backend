@@ -147,6 +147,12 @@ export async function runHistoricalBackfill(
     if (prior <= 1) {
       await Campaign.findOneAndUpdate({ campaignId }, { $inc: { donorCount: 1 } });
     }
+
+    const camp = await Campaign.findOne({ campaignId });
+    if (camp) {
+      const newRaised = (BigInt(camp.raisedAmount || "0") + BigInt(amount.toString())).toString();
+      await Campaign.findOneAndUpdate({ campaignId }, { raisedAmount: newRaised });
+    }
   }
 
   for (const log of proposalLogs) {
