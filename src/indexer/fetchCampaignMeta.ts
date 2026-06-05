@@ -23,12 +23,35 @@ const IPFS_GATEWAYS = [
 const RETRY_DELAY_MS = 2000;
 const MAX_ATTEMPTS = 3;
 
+function normalizeImageUrl(raw?: string): string {
+  if (!raw || typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  if (trimmed.length < 6) return "";
+  if (trimmed.startsWith("ipfs://")) {
+    const cid = trimmed.slice(7).replace(/^ipfs\//, "");
+    return cid ? `https://gateway.pinata.cloud/ipfs/${cid}` : "";
+  }
+  if (/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|ba[a-z2-7]{56,}|baf[a-z2-7]+)$/i.test(trimmed)) {
+    return `https://gateway.pinata.cloud/ipfs/${trimmed}`;
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const url = new URL(trimmed);
+      if (!url.hostname.includes(".") && url.hostname !== "localhost") return "";
+      return trimmed;
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 function parseMeta(json: Record<string, string>): CampaignMeta {
   return {
     title: json.title || "",
     description: json.description || "",
     category: json.category || "general",
-    imageUrl: json.imageUrl || "",
+    imageUrl: normalizeImageUrl(json.imageUrl) || "",
     orgName: json.orgName || "",
   };
 }
