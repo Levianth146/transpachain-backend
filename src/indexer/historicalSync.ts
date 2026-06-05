@@ -3,33 +3,11 @@ import { Campaign } from "../models/Campaign";
 import { Donation } from "../models/Donation";
 import { Proposal } from "../models/Proposal";
 import { VerifiedOrg } from "../models/VerifiedOrg";
+import { fetchCampaignMeta } from "./fetchCampaignMeta";
 
 const CHARITY_CORE_FULL_ABI = [
   "function getCampaign(uint256) view returns (tuple(uint256,address,string,uint256,uint256,uint256,uint8,uint8,uint8,uint8,string,uint256,uint256))",
 ];
-
-async function fetchCampaignMeta(metadataCID: string) {
-  let title = "",
-    description = "",
-    category = "general",
-    imageUrl = "",
-    orgName = "";
-  if (!metadataCID) return { title, description, category, imageUrl, orgName };
-  try {
-    const ipfsRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCID}`);
-    if (ipfsRes.ok) {
-      const meta = (await ipfsRes.json()) as Record<string, string>;
-      title = meta.title || "";
-      description = meta.description || "";
-      category = meta.category || "general";
-      imageUrl = meta.imageUrl || "";
-      orgName = meta.orgName || "";
-    }
-  } catch {
-    /* ignore */
-  }
-  return { title, description, category, imageUrl, orgName };
-}
 
 /** Alchemy free tier allows ~10 blocks per eth_getLogs; override via INDEXER_LOG_CHUNK_SIZE. */
 const LOG_CHUNK_SIZE = Math.max(
@@ -100,7 +78,7 @@ export async function runHistoricalBackfill(
 
     const campaignData = await coreFull.getCampaign(campaignId);
     const metadataCID = campaignData[2];
-    const meta = await fetchCampaignMeta(metadataCID);
+    const meta = await fetchCampaignMeta(metadataCID, campaignId);
 
     await Campaign.findOneAndUpdate(
       { campaignId },

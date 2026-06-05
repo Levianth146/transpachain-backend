@@ -8,14 +8,16 @@ const router = Router();
 // GET /campaigns — list all (paginated, filterable)
 router.get("/", async (req: Request, res: Response) => {
   try {
-    const page     = Math.max(1, Number(req.query.page)  || 1);
-    const limit    = Math.min(50, Number(req.query.limit) || 12);
-    const category = req.query.category as string | undefined;
-    const status   = req.query.status !== undefined ? Number(req.query.status) : undefined;
+    const page         = Math.max(1, Number(req.query.page)  || 1);
+    const limit        = Math.min(100, Number(req.query.limit) || 50);
+    const category     = req.query.category as string | undefined;
+    const status       = req.query.status !== undefined ? Number(req.query.status) : undefined;
+    const includeEmpty = req.query.includeEmpty === "1" || req.query.includeEmpty === "true";
 
     const filter: Record<string, unknown> = {};
     if (category) filter.category = category;
     if (status !== undefined) filter.status = status;
+    if (!includeEmpty) filter.title = { $exists: true, $ne: "" };
 
     const [campaigns, total] = await Promise.all([
       Campaign.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),

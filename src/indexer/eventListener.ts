@@ -4,6 +4,7 @@ import { Campaign } from "../models/Campaign";
 import { Donation } from "../models/Donation";
 import { Proposal } from "../models/Proposal";
 import { VerifiedOrg }  from "../models/VerifiedOrg";
+import { fetchCampaignMeta } from "./fetchCampaignMeta";
 
 // Minimal ABIs for event listening
 const CHARITY_CORE_ABI = [
@@ -67,37 +68,17 @@ export async function startEventListener(io: IOServer) {
     const campaignData = await coreContract.getCampaign(Number(campaignId));
     const metadataCID = campaignData[2];
  
-    let title = "", description = "", category = "general", imageUrl = "", orgName = "";
-    let totalMilestones = Number(campaignData[7]);
-    let paymentToken = Number(campaignData[9]);
- 
-    if (metadataCID) {
-      try {
-        const ipfsRes = await fetch(`https://gateway.pinata.cloud/ipfs/${metadataCID}`);
-        if (ipfsRes.ok) {
-          const meta = await ipfsRes.json() as any;
-          title       = meta.title       || "";
-          description = meta.description || "";
-          category    = meta.category    || "general";
-          imageUrl    = meta.imageUrl    || "";
-          orgName     = meta.orgName     || "";
-        }
-      } catch (e) {
-        console.warn(`[Indexer] Failed to fetch IPFS metadata for campaign #${campaignId}`);
-      }
-    }
- 
+    const meta = await fetchCampaignMeta(metadataCID, Number(campaignId));
+    const totalMilestones = Number(campaignData[7]);
+    const paymentToken = Number(campaignData[9]);
+
     await Campaign.findOneAndUpdate(
       { campaignId: Number(campaignId) },
       {
         campaignId:      Number(campaignId),
         orgAddress:      org.toLowerCase(),
         metadataCID,
-        title,
-        description,
-        category,
-        imageUrl,
-        orgName,
+        ...meta,
         goalAmount:      goal.toString(),
         raisedAmount:    "0",
         deadline:        Number(deadline),
