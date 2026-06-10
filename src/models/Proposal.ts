@@ -12,6 +12,7 @@ export interface IProposal extends Document {
   endBlock:       number;
   executeAfter:   number;
   txHash:         string;
+  approvalStatus: "pending" | "approved" | "rejected";
   createdAt:      Date;
 }
 
@@ -28,6 +29,7 @@ const ProposalSchema = new Schema<IProposal>(
     endBlock:       { type: Number, required: true },
     executeAfter:   { type: Number, default: 0 },
     txHash:         { type: String, required: true },
+    approvalStatus: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
   },
   { timestamps: true }
 );

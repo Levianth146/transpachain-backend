@@ -1,6 +1,8 @@
 import { Router, Request, Response } from "express";
 import { VerifiedOrg } from "../models/VerifiedOrg";
 import { OrgProfile } from "../models/OrgProfile";
+import { Proposal } from "../models/Proposal";
+import { Evidence } from "../models/Evidence";
 
 const router = Router();
 
@@ -51,6 +53,73 @@ router.patch("/org-profiles/:address", async (req: Request, res: Response) => {
     );
     if (!profile) return res.status(404).json({ error: "Profile not found" });
     res.json(profile);
+  } catch {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /admin/proposals?approval=pending
+router.get("/proposals", async (req: Request, res: Response) => {
+  try {
+    const approval = (req.query.approval as string) || "pending";
+    const proposals = await Proposal.find({ approvalStatus: approval })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+    res.json({ proposals, total: proposals.length });
+  } catch {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PATCH /admin/proposals/:proposalId — approve/reject before public governance vote
+router.patch("/proposals/:proposalId", async (req: Request, res: Response) => {
+  try {
+    const proposalId = Number(req.params.proposalId);
+    const { approvalStatus } = req.body as { approvalStatus?: string };
+    if (!["approved", "rejected", "pending"].includes(approvalStatus ?? "")) {
+      return res.status(400).json({ error: "approvalStatus must be approved, rejected, or pending" });
+    }
+    const proposal = await Proposal.findOneAndUpdate(
+      { proposalId },
+      { approvalStatus },
+      { new: true }
+    );
+    if (!proposal) return res.status(404).json({ error: "Proposal not found" });
+    res.json(proposal);
+  } catch {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PATCH /admin/evidence/:id
+router.patch("/evidence/:id", async (req: Request, res: Response) => {
+  try {
+    const { approvalStatus, reviewerNote } = req.body as {
+      approvalStatus?: string;
+      reviewerNote?: string;
+    };
+    if (!["approved", "rejected", "pending"].includes(approvalStatus ?? "")) {
+      return res.status(400).json({ error: "invalid approvalStatus" });
+    }
+    const item = await Evidence.findByIdAndUpdate(
+      req.params.id,
+      { approvalStatus, reviewerNote: reviewerNote ?? "", reviewedAt: new Date() },
+      { new: true }
+    );
+    if (!item) return res.status(404).json({ error: "Evidence not found" });
+    res.json(item);
+  } catch {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /admin/evidence?approval=pending
+router.get("/evidence", async (req: Request, res: Response) => {
+  try {
+    const approval = (req.query.approval as string) || "pending";
+    const items = await Evidence.find({ approvalStatus: approval }).sort({ submittedAt: -1 }).lean();
+    res.json({ evidence: items, total: items.length });
   } catch {
     res.status(500).json({ error: "Internal server error" });
   }

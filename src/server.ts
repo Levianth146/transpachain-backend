@@ -12,6 +12,7 @@ import ipfsRoutes      from "./routes/ipfs";
 import adminRoutes     from "./routes/admin";
 import orgRoutes       from "./routes/orgs";
 import proposalRoutes  from "./routes/proposals";
+import evidenceRoutes  from "./routes/evidence";
 import { startEventListener } from "./indexer/eventListener";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -44,6 +45,7 @@ app.use("/ipfs",       ipfsRoutes);
 app.use("/admin",      adminRoutes);
 app.use("/orgs",       orgRoutes);
 app.use("/proposals",  proposalRoutes);
+app.use("/evidence",   evidenceRoutes);
 app.use(errorHandler);
 
 // ─── Socket.io ────────────────────────────────────────────────

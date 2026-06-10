@@ -222,6 +222,7 @@ export async function startEventListener(io: IOServer) {
       proofCID,
       endBlock:       Number(endBlock),
       txHash:         tx.hash,
+      approvalStatus: "pending",
     });
     io.emit("proposalCreated", { proposalId: Number(proposalId), campaignId: Number(campaignId) });
   });

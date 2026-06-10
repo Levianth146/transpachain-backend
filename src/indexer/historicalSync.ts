@@ -146,6 +146,7 @@ export async function runHistoricalBackfill(
       proofCID: parsed.args[3],
       endBlock: Number(parsed.args[4]),
       txHash: log.transactionHash,
+      approvalStatus: "pending",
     });
   }
 

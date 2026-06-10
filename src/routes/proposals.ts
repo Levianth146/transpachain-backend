@@ -17,8 +17,14 @@ const STATE_LABEL: Record<number, string> = {
 router.get("/", async (req: Request, res: Response) => {
   try {
     const state = req.query.state !== undefined ? Number(req.query.state) : undefined;
+    const approval = (req.query.approval as string) || "approved";
     const filter: Record<string, unknown> = {};
     if (state !== undefined && !Number.isNaN(state)) filter.state = state;
+    if (approval === "approved") {
+      filter.$or = [{ approvalStatus: "approved" }, { approvalStatus: { $exists: false } }];
+    } else if (approval !== "all") {
+      filter.approvalStatus = approval;
+    }
 
     const proposals = await Proposal.find(filter).sort({ createdAt: -1 }).limit(100).lean();
     const campaignIds = [...new Set(proposals.map((p) => p.campaignId))];

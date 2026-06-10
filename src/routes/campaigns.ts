@@ -61,7 +61,10 @@ router.get("/:id", async (req: Request, res: Response) => {
 // GET /campaigns/:id/proposals — active governance proposals
 router.get("/:id/proposals", async (req: Request, res: Response) => {
   try {
-    const proposals = await Proposal.find({ campaignId: Number(req.params.id) }).sort({ createdAt: -1 }).lean();
+    const proposals = await Proposal.find({
+      campaignId: Number(req.params.id),
+      $or: [{ approvalStatus: "approved" }, { approvalStatus: { $exists: false } }],
+    }).sort({ createdAt: -1 }).lean();
     res.json(proposals);
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
