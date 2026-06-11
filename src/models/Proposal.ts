@@ -13,6 +13,9 @@ export interface IProposal extends Document {
   executeAfter:   number;
   txHash:         string;
   approvalStatus: "pending" | "approved" | "rejected";
+  closedByAdmin:  boolean;
+  closedReason:   string;
+  closedAt:       Date | null;
   createdAt:      Date;
 }
 
@@ -30,6 +33,9 @@ const ProposalSchema = new Schema<IProposal>(
     executeAfter:   { type: Number, default: 0 },
     txHash:         { type: String, required: true },
     approvalStatus: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+    closedByAdmin:  { type: Boolean, default: false },
+    closedReason:   { type: String, default: "" },
+    closedAt:       { type: Date, default: null },
   },
   { timestamps: true }
 );

@@ -32,6 +32,7 @@ const DAO_ABI = [
   "event ProposalExecuted(uint256 indexed proposalId)",
   "event ProposalDefeated(uint256 indexed proposalId)",
   "event ProposalResubmitted(uint256 indexed newProposalId, uint256 indexed oldProposalId)",
+  "event ProposalClosed(uint256 indexed proposalId, address indexed closedBy, string reason)",
 ];
  
 export async function startEventListener(io: IOServer) {
@@ -258,6 +259,24 @@ export async function startEventListener(io: IOServer) {
     io.emit("proposalResubmitted", {
       newProposalId: Number(newProposalId),
       oldProposalId: Number(oldProposalId),
+    });
+  });
+
+  dao.on("ProposalClosed", async (proposalId, closedBy, reason) => {
+    await Proposal.findOneAndUpdate(
+      { proposalId: Number(proposalId) },
+      {
+        state: 5,
+        closedByAdmin: true,
+        closedReason: String(reason),
+        closedAt: new Date(),
+        approvalStatus: "rejected",
+      }
+    );
+    io.emit("proposalClosed", {
+      proposalId: Number(proposalId),
+      closedBy: String(closedBy),
+      reason: String(reason),
     });
   });
 

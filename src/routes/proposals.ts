@@ -31,12 +31,14 @@ router.get("/", async (req: Request, res: Response) => {
     const campaigns = await Campaign.find({ campaignId: { $in: campaignIds } }).lean();
     const byId = Object.fromEntries(campaigns.map((c) => [c.campaignId, c]));
 
-    const enriched = proposals.map((p) => ({
-      ...p,
-      stateLabel: STATE_LABEL[p.state] ?? "Unknown",
-      campaignTitle: byId[p.campaignId]?.title ?? `Campaign #${p.campaignId}`,
-      campaignCategory: byId[p.campaignId]?.category ?? "",
-    }));
+    const enriched = proposals
+      .filter((p) => !p.closedByAdmin)
+      .map((p) => ({
+        ...p,
+        stateLabel: STATE_LABEL[p.state] ?? "Unknown",
+        campaignTitle: byId[p.campaignId]?.title ?? `Campaign #${p.campaignId}`,
+        campaignCategory: byId[p.campaignId]?.category ?? "",
+      }));
 
     res.json({ proposals: enriched, total: enriched.length });
   } catch {

@@ -72,11 +72,32 @@ router.get("/proposals", async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /admin/proposals/:proposalId — approve/reject before public governance vote
+// PATCH /admin/proposals/:proposalId — approve/reject or close with reason
 router.patch("/proposals/:proposalId", async (req: Request, res: Response) => {
   try {
     const proposalId = Number(req.params.proposalId);
-    const { approvalStatus } = req.body as { approvalStatus?: string };
+    const { approvalStatus, closedByAdmin, closedReason } = req.body as {
+      approvalStatus?: string;
+      closedByAdmin?: boolean;
+      closedReason?: string;
+    };
+
+    if (closedByAdmin) {
+      const proposal = await Proposal.findOneAndUpdate(
+        { proposalId },
+        {
+          closedByAdmin: true,
+          closedReason: closedReason ?? "Closed by admin",
+          closedAt: new Date(),
+          state: 5,
+          approvalStatus: "rejected",
+        },
+        { new: true }
+      );
+      if (!proposal) return res.status(404).json({ error: "Proposal not found" });
+      return res.json(proposal);
+    }
+
     if (!["approved", "rejected", "pending"].includes(approvalStatus ?? "")) {
       return res.status(400).json({ error: "approvalStatus must be approved, rejected, or pending" });
     }
