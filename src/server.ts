@@ -60,15 +60,17 @@ async function main() {
   await mongoose.connect(mongoUri);
   console.log("[DB] MongoDB connected");
 
-  // Start blockchain event listener
+  const port = Number(process.env.PORT) || 3001;
+  server.listen(port, () => console.log(`[Server] Running on http://localhost:${port}`));
+
+  // Indexer backfill can take minutes — run after HTTP is up so /health and API stay reachable
   if (process.env.ALCHEMY_SEPOLIA_URL && process.env.CHARITY_CORE_ADDRESS) {
-    await startEventListener(io);
+    void startEventListener(io).catch((err) =>
+      console.error("[Indexer] Event listener failed:", err)
+    );
   } else {
     console.warn("[Indexer] Env vars not set — skipping event listener");
   }
-
-  const port = Number(process.env.PORT) || 3001;
-  server.listen(port, () => console.log(`[Server] Running on http://localhost:${port}`));
 }
 
 main().catch(console.error);
