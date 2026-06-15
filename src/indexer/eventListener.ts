@@ -34,7 +34,16 @@ const DAO_ABI = [
   "event ProposalResubmitted(uint256 indexed newProposalId, uint256 indexed oldProposalId)",
   "event ProposalClosed(uint256 indexed proposalId, address indexed closedBy, string reason)",
 ];
- 
+
+const SUBSCRIPTION_DELAY_MS = Math.max(
+  0,
+  Number(process.env.INDEXER_SUBSCRIPTION_DELAY_MS || 200)
+);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function startEventListener(io: IOServer) {
   const provider = new ethers.JsonRpcProvider(process.env.ALCHEMY_SEPOLIA_URL);
  
@@ -148,9 +157,11 @@ export async function startEventListener(io: IOServer) {
       console.error("[Indexer] OrgVerified error:", e);
     }
   });
- 
+
+  if (SUBSCRIPTION_DELAY_MS > 0) await sleep(SUBSCRIPTION_DELAY_MS);
+
   // ─── DonationVault events ──────────────────────────────────
- 
+
   vault.on("DonationReceived", async (campaignId, donor, amount, tokenType, event) => {
     console.log(`[Indexer] DonationReceived campaign #${campaignId} from ${donor}`);
  
@@ -210,9 +221,11 @@ export async function startEventListener(io: IOServer) {
     );
     io.emit("refundProcessed", { campaignId: Number(campaignId), donor, amount: amount.toString() });
   });
- 
+
+  if (SUBSCRIPTION_DELAY_MS > 0) await sleep(SUBSCRIPTION_DELAY_MS);
+
   // ─── GovernanceDAO events ──────────────────────────────────
- 
+
   dao.on("ProposalCreated", async (proposalId, campaignId, milestoneIndex, proofCID, endBlock, event) => {
     console.log(`[Indexer] ProposalCreated #${proposalId}`);
     const tx = await event.getTransaction();

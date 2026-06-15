@@ -15,22 +15,79 @@ const LOG_CHUNK_SIZE = Math.max(
   Number(process.env.INDEXER_LOG_CHUNK_SIZE || 10)
 );
 
+const CHUNK_DELAY_MS = Math.max(
+  0,
+  Number(process.env.INDEXER_CHUNK_DELAY_MS || 300)
+);
+
+const FILTER_DELAY_MS = Math.max(
+  0,
+  Number(process.env.INDEXER_FILTER_DELAY_MS || 500)
+);
+
+const MAX_RETRIES = Math.max(
+  1,
+  Number(process.env.INDEXER_MAX_RETRIES || 4)
+);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(err: unknown): boolean {
+  const msg = String((err as { message?: string })?.message ?? err).toLowerCase();
+  return (
+    msg.includes("429") ||
+    msg.includes("rate limit") ||
+    msg.includes("too many requests") ||
+    msg.includes("-32005")
+  );
+}
+
+async function queryFilterWithRetry(
+  contract: ethers.Contract,
+  filter: ethers.ContractEventName,
+  start: number,
+  end: number
+): Promise<ethers.Log[]> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return await contract.queryFilter(filter, start, end);
+    } catch (err) {
+      lastErr = err;
+      if (!isRateLimitError(err) || attempt === MAX_RETRIES - 1) throw err;
+      const delayMs = 1000 * 2 ** attempt;
+      console.warn(
+        `[Indexer] eth_getLogs rate limited (blocks ${start}-${end}), retry ${attempt + 1}/${MAX_RETRIES - 1} in ${delayMs}ms`
+      );
+      await sleep(delayMs);
+    }
+  }
+  throw lastErr;
+}
+
 async function queryFilterChunked(
   contract: ethers.Contract,
   filter: ethers.ContractEventName,
   fromBlock: number,
-  toBlock: number
+  toBlock: number,
+  label: string
 ): Promise<ethers.Log[]> {
   const logs: ethers.Log[] = [];
   for (let start = fromBlock; start <= toBlock; start += LOG_CHUNK_SIZE) {
     const end = Math.min(start + LOG_CHUNK_SIZE - 1, toBlock);
-    const chunk = await contract.queryFilter(filter, start, end);
+    const chunk = await queryFilterWithRetry(contract, filter, start, end);
     logs.push(...chunk);
     if ((end - fromBlock) % (LOG_CHUNK_SIZE * 100) < LOG_CHUNK_SIZE) {
-      process.stdout.write(`\r[Indexer] Scanned through block ${end} (${logs.length} logs)   `);
+      process.stdout.write(`\r[Indexer] Backfill ${label}: scanned through block ${end} (${logs.length} logs)   `);
+    }
+    if (end < toBlock && CHUNK_DELAY_MS > 0) {
+      await sleep(CHUNK_DELAY_MS);
     }
   }
   if (toBlock > fromBlock) process.stdout.write("\n");
+  console.log(`[Indexer] Backfill ${label}: ${logs.length} logs`);
   return logs;
 }
 
@@ -61,12 +118,16 @@ export async function runHistoricalBackfill(
   const proposalFilter = dao.filters.ProposalCreated();
   const orgFilter = core.filters.OrgVerified();
 
-  const [campaignLogs, donationLogs, proposalLogs, orgLogs] = await Promise.all([
-    queryFilterChunked(core, campaignFilter, fromBlock, toBlock),
-    queryFilterChunked(vault, donationFilter, fromBlock, toBlock),
-    queryFilterChunked(dao, proposalFilter, fromBlock, toBlock),
-    queryFilterChunked(core, orgFilter, fromBlock, toBlock),
-  ]);
+  const campaignLogs = await queryFilterChunked(core, campaignFilter, fromBlock, toBlock, "campaigns");
+  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
+
+  const donationLogs = await queryFilterChunked(vault, donationFilter, fromBlock, toBlock, "donations");
+  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
+
+  const proposalLogs = await queryFilterChunked(dao, proposalFilter, fromBlock, toBlock, "proposals");
+  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
+
+  const orgLogs = await queryFilterChunked(core, orgFilter, fromBlock, toBlock, "orgs");
 
   for (const log of campaignLogs) {
     const parsed = core.interface.parseLog({ topics: log.topics as string[], data: log.data });
