@@ -91,44 +91,12 @@ async function queryFilterChunked(
   return logs;
 }
 
-/**
- * Backfill indexed data from DEPLOY_FROM_BLOCK using queryFilter.
- */
-export async function runHistoricalBackfill(
-  provider: ethers.JsonRpcProvider,
-  contracts: {
-    core: ethers.Contract;
-    vault: ethers.Contract;
-    dao: ethers.Contract;
-  },
-  fromBlock: number,
-  toBlock: number
-) {
-  const { core, vault, dao } = contracts;
-  const coreFull = new ethers.Contract(
-    process.env.CHARITY_CORE_ADDRESS!,
-    CHARITY_CORE_FULL_ABI,
-    provider
-  );
-
-  console.log(`[Indexer] Backfill blocks ${fromBlock} → ${toBlock}`);
-
-  const campaignFilter = core.filters.CampaignCreated();
-  const donationFilter = vault.filters.DonationReceived();
-  const proposalFilter = dao.filters.ProposalCreated();
-  const orgFilter = core.filters.OrgVerified();
-
-  const campaignLogs = await queryFilterChunked(core, campaignFilter, fromBlock, toBlock, "campaigns");
-  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
-
-  const donationLogs = await queryFilterChunked(vault, donationFilter, fromBlock, toBlock, "donations");
-  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
-
-  const proposalLogs = await queryFilterChunked(dao, proposalFilter, fromBlock, toBlock, "proposals");
-  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
-
-  const orgLogs = await queryFilterChunked(core, orgFilter, fromBlock, toBlock, "orgs");
-
+async function persistCampaigns(
+  campaignLogs: ethers.Log[],
+  core: ethers.Contract,
+  coreFull: ethers.Contract
+): Promise<number> {
+  let persisted = 0;
   for (const log of campaignLogs) {
     const parsed = core.interface.parseLog({ topics: log.topics as string[], data: log.data });
     if (!parsed) continue;
@@ -157,8 +125,17 @@ export async function runHistoricalBackfill(
       },
       { upsert: true }
     );
+    persisted++;
   }
+  return persisted;
+}
 
+async function persistDonations(
+  donationLogs: ethers.Log[],
+  vault: ethers.Contract,
+  provider: ethers.JsonRpcProvider
+): Promise<number> {
+  let persisted = 0;
   for (const log of donationLogs) {
     const parsed = vault.interface.parseLog({ topics: log.topics as string[], data: log.data });
     if (!parsed) continue;
@@ -192,8 +169,16 @@ export async function runHistoricalBackfill(
       const newRaised = (BigInt(camp.raisedAmount || "0") + BigInt(amount.toString())).toString();
       await Campaign.findOneAndUpdate({ campaignId }, { raisedAmount: newRaised });
     }
+    persisted++;
   }
+  return persisted;
+}
 
+async function persistProposals(
+  proposalLogs: ethers.Log[],
+  dao: ethers.Contract
+): Promise<number> {
+  let persisted = 0;
   for (const log of proposalLogs) {
     const parsed = dao.interface.parseLog({ topics: log.topics as string[], data: log.data });
     if (!parsed) continue;
@@ -209,8 +194,16 @@ export async function runHistoricalBackfill(
       txHash: log.transactionHash,
       approvalStatus: "pending",
     });
+    persisted++;
   }
+  return persisted;
+}
 
+async function persistOrgs(
+  orgLogs: ethers.Log[],
+  core: ethers.Contract
+): Promise<number> {
+  let persisted = 0;
   for (const log of orgLogs) {
     const parsed = core.interface.parseLog({ topics: log.topics as string[], data: log.data });
     if (!parsed) continue;
@@ -221,9 +214,80 @@ export async function runHistoricalBackfill(
       { address: org, verified, txHash: log.transactionHash, blockNumber: log.blockNumber },
       { upsert: true }
     );
+    persisted++;
+  }
+  return persisted;
+}
+
+/**
+ * Backfill indexed data from DEPLOY_FROM_BLOCK using queryFilter.
+ * Each stage fetches logs then immediately persists to Mongo so partial progress survives failures.
+ */
+export async function runHistoricalBackfill(
+  provider: ethers.JsonRpcProvider,
+  contracts: {
+    core: ethers.Contract;
+    vault: ethers.Contract;
+    dao: ethers.Contract;
+  },
+  fromBlock: number,
+  toBlock: number
+) {
+  const { core, vault, dao } = contracts;
+  const coreFull = new ethers.Contract(
+    process.env.CHARITY_CORE_ADDRESS!,
+    CHARITY_CORE_FULL_ABI,
+    provider
+  );
+
+  console.log(`[Indexer] Backfill blocks ${fromBlock} → ${toBlock}`);
+
+  const campaignFilter = core.filters.CampaignCreated();
+  const donationFilter = vault.filters.DonationReceived();
+  const proposalFilter = dao.filters.ProposalCreated();
+  const orgFilter = core.filters.OrgVerified();
+
+  const counts = { campaigns: 0, donations: 0, proposals: 0, orgs: 0 };
+
+  try {
+    const campaignLogs = await queryFilterChunked(core, campaignFilter, fromBlock, toBlock, "campaigns");
+    counts.campaigns = await persistCampaigns(campaignLogs, core, coreFull);
+    console.log(`[Indexer] Backfill campaigns: persisted ${counts.campaigns}`);
+  } catch (err) {
+    console.error("[Indexer] Backfill campaigns stage failed:", err);
+  }
+
+  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
+
+  try {
+    const donationLogs = await queryFilterChunked(vault, donationFilter, fromBlock, toBlock, "donations");
+    counts.donations = await persistDonations(donationLogs, vault, provider);
+    console.log(`[Indexer] Backfill donations: persisted ${counts.donations}`);
+  } catch (err) {
+    console.error("[Indexer] Backfill donations stage failed:", err);
+  }
+
+  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
+
+  try {
+    const proposalLogs = await queryFilterChunked(dao, proposalFilter, fromBlock, toBlock, "proposals");
+    counts.proposals = await persistProposals(proposalLogs, dao);
+    console.log(`[Indexer] Backfill proposals: persisted ${counts.proposals}`);
+  } catch (err) {
+    console.error("[Indexer] Backfill proposals stage failed:", err);
+  }
+
+  if (FILTER_DELAY_MS > 0) await sleep(FILTER_DELAY_MS);
+
+  try {
+    const orgLogs = await queryFilterChunked(core, orgFilter, fromBlock, toBlock, "orgs");
+    counts.orgs = await persistOrgs(orgLogs, core);
+    console.log(`[Indexer] Backfill orgs: persisted ${counts.orgs}`);
+  } catch (err) {
+    console.error("[Indexer] Backfill orgs stage failed:", err);
   }
 
   console.log(
-    `[Indexer] Backfill done: campaigns=${campaignLogs.length} donations=${donationLogs.length} proposals=${proposalLogs.length} orgs=${orgLogs.length}`
+    `[Indexer] Backfill done: campaigns=${counts.campaigns} donations=${counts.donations} proposals=${counts.proposals} orgs=${counts.orgs}`
   );
 }
