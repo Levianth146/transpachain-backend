@@ -6,13 +6,17 @@ export interface CampaignMeta {
   orgName: string;
 }
 
-const EMPTY_META: CampaignMeta = {
-  title: "",
+function fallbackTitle(campaignId?: number): string {
+  return campaignId !== undefined ? `Campaign #${campaignId}` : "";
+}
+
+const emptyMeta = (campaignId?: number): CampaignMeta => ({
+  title: fallbackTitle(campaignId),
   description: "",
   category: "general",
   imageUrl: "",
   orgName: "",
-};
+});
 
 const IPFS_GATEWAYS = [
   (cid: string) => `https://gateway.pinata.cloud/ipfs/${cid}`,
@@ -46,9 +50,9 @@ function normalizeImageUrl(raw?: string): string {
   return "";
 }
 
-function parseMeta(json: Record<string, string>): CampaignMeta {
+function parseMeta(json: Record<string, string>, campaignId?: number): CampaignMeta {
   return {
-    title: json.title || "",
+    title: json.title?.trim() || fallbackTitle(campaignId),
     description: json.description || "",
     category: json.category || "general",
     imageUrl: normalizeImageUrl(json.imageUrl) || "",
@@ -56,11 +60,14 @@ function parseMeta(json: Record<string, string>): CampaignMeta {
   };
 }
 
-async function fetchFromGateway(url: string): Promise<CampaignMeta | null> {
+async function fetchFromGateway(
+  url: string,
+  campaignId?: number
+): Promise<CampaignMeta | null> {
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) return null;
   const json = (await res.json()) as Record<string, string>;
-  return parseMeta(json);
+  return parseMeta(json, campaignId);
 }
 
 function sleep(ms: number) {
@@ -71,11 +78,16 @@ function sleep(ms: number) {
  * Fetch campaign metadata from IPFS with gateway fallbacks and retries.
  * Logs clearly when all attempts fail so empty-title campaigns can be diagnosed.
  */
+export function campaignDisplayTitle(campaign: { campaignId: number; title?: string }): string {
+  const trimmed = campaign.title?.trim();
+  return trimmed || fallbackTitle(campaign.campaignId);
+}
+
 export async function fetchCampaignMeta(
   metadataCID: string,
   campaignId?: number
 ): Promise<CampaignMeta> {
-  if (!metadataCID) return { ...EMPTY_META };
+  if (!metadataCID) return emptyMeta(campaignId);
 
   const label = campaignId !== undefined ? `campaign #${campaignId}` : `CID ${metadataCID}`;
 
@@ -83,15 +95,12 @@ export async function fetchCampaignMeta(
     for (const gateway of IPFS_GATEWAYS) {
       const url = gateway(metadataCID);
       try {
-        const meta = await fetchFromGateway(url);
-        if (meta && meta.title) {
+        const meta = await fetchFromGateway(url, campaignId);
+        if (meta) {
           if (attempt > 1) {
             console.log(`[Indexer] IPFS metadata for ${label} succeeded on attempt ${attempt}`);
           }
           return meta;
-        }
-        if (meta && !meta.title) {
-          console.warn(`[Indexer] IPFS metadata for ${label} missing title field (gateway: ${url})`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -109,7 +118,7 @@ export async function fetchCampaignMeta(
 
   console.error(
     `[Indexer] All IPFS gateways failed for ${label} (CID: ${metadataCID}). ` +
-      `Campaign will be indexed without metadata — re-run backfill or fix gateway access.`
+      `Using fallback title "${fallbackTitle(campaignId)}".`
   );
-  return { ...EMPTY_META };
+  return emptyMeta(campaignId);
 }

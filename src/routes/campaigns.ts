@@ -2,8 +2,13 @@ import { Router, Request, Response } from "express";
 import { Campaign } from "../models/Campaign";
 import { Proposal } from "../models/Proposal";
 import { Donation } from "../models/Donation";
+import { campaignDisplayTitle } from "../indexer/fetchCampaignMeta";
 
 const router = Router();
+
+function withDisplayTitle<T extends { campaignId: number; title?: string }>(campaign: T) {
+  return { ...campaign, title: campaignDisplayTitle(campaign) };
+}
 
 // GET /campaigns — list all (paginated, filterable)
 router.get("/", async (req: Request, res: Response) => {
@@ -12,19 +17,21 @@ router.get("/", async (req: Request, res: Response) => {
     const limit        = Math.min(100, Number(req.query.limit) || 50);
     const category     = req.query.category as string | undefined;
     const status       = req.query.status !== undefined ? Number(req.query.status) : undefined;
-    const includeEmpty = req.query.includeEmpty === "1" || req.query.includeEmpty === "true";
-
     const filter: Record<string, unknown> = {};
     if (category) filter.category = category;
     if (status !== undefined) filter.status = status;
-    if (!includeEmpty) filter.title = { $exists: true, $ne: "" };
 
     const [campaigns, total] = await Promise.all([
       Campaign.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
       Campaign.countDocuments(filter),
     ]);
 
-    res.json({ campaigns, total, page, pages: Math.ceil(total / limit) });
+    res.json({
+      campaigns: campaigns.map(withDisplayTitle),
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    });
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
   }
@@ -34,8 +41,8 @@ router.get("/", async (req: Request, res: Response) => {
 router.get("/stats", async (req: Request, res: Response) => {
   try {
     const [totalCampaigns, activeCampaigns, totalDonations, totalUniqueDonors] = await Promise.all([
-      Campaign.countDocuments({ title: { $exists: true, $ne: "" } }),
-      Campaign.countDocuments({ status: 0, title: { $exists: true, $ne: "" } }),   // 0 = Active
+      Campaign.countDocuments({}),
+      Campaign.countDocuments({ status: 0 }),   // 0 = Active
       Donation.find().lean(),
       Donation.distinct("donor"),
     ]);
@@ -52,7 +59,7 @@ router.get("/:id", async (req: Request, res: Response) => {
   try {
     const campaign = await Campaign.findOne({ campaignId: Number(req.params.id) }).lean();
     if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-    res.json(campaign);
+    res.json(withDisplayTitle(campaign));
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
   }
