@@ -203,6 +203,7 @@ async function processPollRange(
           { status: 3, cancelledAt: Number(p.args[2]) }
         );
         io.emit("campaignCancelled", { campaignId: Number(p.args[0]) });
+        io.emit("campaignUpdated", { campaignId: Number(p.args[0]) });
       },
     },
     {
