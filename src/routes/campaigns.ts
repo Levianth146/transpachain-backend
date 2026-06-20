@@ -78,13 +78,17 @@ router.get("/", async (req: Request, res: Response) => {
 // GET /campaigns/stats — platform statistics (indexed / MongoDB)
 router.get("/stats", async (req: Request, res: Response) => {
   try {
-    const [distinctCampaignIds, activeCampaigns, totalDonations, totalUniqueDonors] = await Promise.all([
+    const [distinctCampaignIds, activeCampaigns, totalDonations, donorAgg] = await Promise.all([
       Campaign.distinct("campaignId"),
       Campaign.countDocuments({ status: 0 }),   // 0 = Active
       Donation.find().lean(),
-      Donation.distinct("donor"),
+      Donation.aggregate<{ _id: string }>([
+        { $match: { donor: { $exists: true, $nin: [null, ""] } } },
+        { $group: { _id: { $toLower: "$donor" } } },
+      ]),
     ]);
     const totalCampaigns = distinctCampaignIds.length;
+    const countUniqueDonors = donorAgg.length;
 
     let totalDonatedEth = 0n;
     let totalDonatedUsdc = 0n;
@@ -112,8 +116,8 @@ router.get("/stats", async (req: Request, res: Response) => {
       totalDonatedUsdc: totalDonatedUsdc.toString(),
       totalDonatedGrossEth: totalDonatedGrossEth.toString(),
       totalDonatedGrossUsdc: totalDonatedGrossUsdc.toString(),
-      countUniqueDonors: totalUniqueDonors.length,
-      note: "Campaign count uses distinct campaignId. Donor count from indexed donations. Raised totals are on-chain in UI.",
+      countUniqueDonors,
+      note: "Campaign count uses distinct campaignId. Donor count = unique lowercase wallet addresses from indexed donations. Raised totals are on-chain in UI.",
     });
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
