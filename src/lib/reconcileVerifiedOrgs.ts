@@ -91,7 +91,7 @@ interface ResolveScanRange {
 
 async function resolveScanRange(toBlock: number): Promise<ResolveScanRange> {
   const deployBlock = Number(process.env.DEPLOY_FROM_BLOCK || 0);
-  const contractDeployBlock = Number(process.env.CONTRACT_DEPLOY_BLOCK || 11046235);
+  const contractDeployBlock = Number(process.env.CONTRACT_DEPLOY_BLOCK || 11102718);
   const state = await getOrgReconcileState();
 
   if (deployBlock > 0) {
