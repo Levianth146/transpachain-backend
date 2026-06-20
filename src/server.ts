@@ -13,7 +13,8 @@ import adminRoutes     from "./routes/admin";
 import orgRoutes       from "./routes/orgs";
 import proposalRoutes  from "./routes/proposals";
 import evidenceRoutes  from "./routes/evidence";
-import { startEventListener } from "./indexer/eventListener";
+import { startEventListener, getIndexerStatus } from "./indexer/eventListener";
+import { getRpcHealth } from "./lib/rpcProvider";
 import { errorHandler } from "./middleware/errorHandler";
 
 dotenv.config();
@@ -38,7 +39,55 @@ app.use(
 );
 
 // ─── Routes ───────────────────────────────────────────────────
-app.get("/health", (_req, res) => res.json({ status: "ok", chain: "sepolia" }));
+app.get("/health", async (_req, res) => {
+  const indexer = getIndexerStatus();
+  const rpc = getRpcHealth();
+  let onChainCampaigns: number | null = null;
+  try {
+    if (process.env.CHARITY_CORE_ADDRESS && rpc.status !== "down") {
+      const { ethers } = await import("ethers");
+      const { getProvider } = await import("./lib/rpcProvider");
+      const provider = getProvider();
+      const core = new ethers.Contract(
+        process.env.CHARITY_CORE_ADDRESS,
+        ["function totalCampaigns() view returns (uint256)"],
+        provider
+      );
+      onChainCampaigns = Number(await core.totalCampaigns());
+    }
+  } catch {
+    /* RPC unavailable — health still returns */
+  }
+
+  const indexedCampaigns = await (async () => {
+    try {
+      const { Campaign } = await import("./models/Campaign");
+      return await Campaign.countDocuments({});
+    } catch {
+      return null;
+    }
+  })();
+
+  res.json({
+    status: rpc.status === "down" ? "degraded" : "ok",
+    chain: "sepolia",
+    dataSources: {
+      indexed: "MongoDB — synced from chain events (may lag if RPC paused)",
+      onChainReads: "Frontend wagmi/viem — live RPC",
+      metadata: "IPFS via Pinata / gateway proxy",
+    },
+    rpc,
+    indexer: {
+      ...indexer,
+      indexedCampaigns,
+      onChainCampaigns,
+      inSync:
+        onChainCampaigns != null &&
+        indexedCampaigns != null &&
+        onChainCampaigns === indexedCampaigns,
+    },
+  });
+});
 app.use("/campaigns",  campaignRoutes);
 app.use("/donations",  donationRoutes);
 app.use("/ipfs",       ipfsRoutes);
@@ -64,7 +113,7 @@ async function main() {
   server.listen(port, () => console.log(`[Server] Running on http://localhost:${port}`));
 
   // Indexer backfill can take minutes — run after HTTP is up so /health and API stay reachable
-  if (process.env.ALCHEMY_SEPOLIA_URL && process.env.CHARITY_CORE_ADDRESS) {
+  if ((process.env.ALCHEMY_SEPOLIA_URL || process.env.SEPOLIA_RPC_URL) && process.env.CHARITY_CORE_ADDRESS) {
     void startEventListener(io).catch((err) =>
       console.error("[Indexer] Event listener failed:", err)
     );

@@ -6,8 +6,12 @@ import { campaignDisplayTitle } from "../indexer/fetchCampaignMeta";
 
 const router = Router();
 
+function withDataSource<T extends Record<string, unknown>>(doc: T, source: "indexed" = "indexed") {
+  return { ...doc, _source: source };
+}
+
 function withDisplayTitle<T extends { campaignId: number; title?: string }>(campaign: T) {
-  return { ...campaign, title: campaignDisplayTitle(campaign) };
+  return withDataSource({ ...campaign, title: campaignDisplayTitle(campaign) });
 }
 
 // GET /campaigns — list all (paginated, filterable)
@@ -31,13 +35,14 @@ router.get("/", async (req: Request, res: Response) => {
       total,
       page,
       pages: Math.ceil(total / limit),
+      _source: "indexed",
     });
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// GET /campaigns/stats — platform statistics
+// GET /campaigns/stats — platform statistics (indexed / MongoDB)
 router.get("/stats", async (req: Request, res: Response) => {
   try {
     const [totalCampaigns, activeCampaigns, totalDonations, totalUniqueDonors] = await Promise.all([
@@ -46,9 +51,36 @@ router.get("/stats", async (req: Request, res: Response) => {
       Donation.find().lean(),
       Donation.distinct("donor"),
     ]);
-    const totalDonated = totalDonations.reduce((acc, d) => acc + BigInt(d.amount), 0n ).toString();
-    const countUniqueDonors = totalUniqueDonors.length;
-    res.json({ totalCampaigns, activeCampaigns, totalDonated, countUniqueDonors })
+
+    let totalDonatedEth = 0n;
+    let totalDonatedUsdc = 0n;
+    let totalDonatedGrossEth = 0n;
+    let totalDonatedGrossUsdc = 0n;
+
+    for (const d of totalDonations) {
+      const gross = BigInt(d.amount || "0");
+      const net = BigInt(d.netAmount || d.amount || "0");
+      if (d.tokenType === 1) {
+        totalDonatedUsdc += net;
+        totalDonatedGrossUsdc += gross;
+      } else {
+        totalDonatedEth += net;
+        totalDonatedGrossEth += gross;
+      }
+    }
+
+    res.json({
+      _source: "indexed",
+      totalCampaigns,
+      activeCampaigns,
+      totalDonated: totalDonatedEth.toString(),
+      totalDonatedEth: totalDonatedEth.toString(),
+      totalDonatedUsdc: totalDonatedUsdc.toString(),
+      totalDonatedGrossEth: totalDonatedGrossEth.toString(),
+      totalDonatedGrossUsdc: totalDonatedGrossUsdc.toString(),
+      countUniqueDonors: totalUniqueDonors.length,
+      note: "raisedAmount and totals are net of 1% platform fee; donation.amount is gross sent",
+    });
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
   }

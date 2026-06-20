@@ -3,7 +3,8 @@ import { Schema, model, Document } from "mongoose";
 export interface IDonation extends Document {
   campaignId: number;
   donor:      string;
-  amount:     string;  // wei as string
+  amount:     string;  // gross wei (event amount)
+  netAmount?: string;  // after 1% platform fee — matches CharityCore.raisedAmount
   txHash:     string;
   blockNumber: number;
   timestamp:  Date;
@@ -15,6 +16,7 @@ const DonationSchema = new Schema<IDonation>({
   campaignId:  { type: Number, required: true, index: true },
   donor:       { type: String, required: true, index: true },
   amount:      { type: String, required: true },
+  netAmount:   { type: String },
   txHash:      { type: String, required: true, unique: true },
   blockNumber: { type: Number, default: 0 },
   timestamp:   { type: Date,   default: Date.now },

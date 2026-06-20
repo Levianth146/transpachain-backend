@@ -4,6 +4,7 @@ import { Donation } from "../models/Donation";
 import { Proposal } from "../models/Proposal";
 import { VerifiedOrg } from "../models/VerifiedOrg";
 import { fetchCampaignMeta } from "./fetchCampaignMeta";
+import { netDonationAmount } from "../lib/rpcProvider";
 
 const CHARITY_CORE_FULL_ABI = [
   "function getCampaign(uint256) view returns (tuple(uint256,address,string,uint256,uint256,uint256,uint8,uint8,uint8,uint8,string,uint256,uint256))",
@@ -141,9 +142,10 @@ async function persistDonations(
     if (!parsed) continue;
     const campaignId = Number(parsed.args[0]);
     const donor = String(parsed.args[1]).toLowerCase();
-    const amount = parsed.args[2];
+    const grossAmount = parsed.args[2];
     const tokenType = Number(parsed.args[3]);
     const txHash = log.transactionHash;
+    const netAmount = netDonationAmount(BigInt(grossAmount.toString()));
 
     const exists = await Donation.findOne({ txHash });
     if (exists) continue;
@@ -152,7 +154,8 @@ async function persistDonations(
     await Donation.create({
       campaignId,
       donor,
-      amount: amount.toString(),
+      amount: grossAmount.toString(),
+      netAmount: netAmount.toString(),
       txHash,
       blockNumber: log.blockNumber,
       tokenType,
@@ -166,7 +169,7 @@ async function persistDonations(
 
     const camp = await Campaign.findOne({ campaignId });
     if (camp) {
-      const newRaised = (BigInt(camp.raisedAmount || "0") + BigInt(amount.toString())).toString();
+      const newRaised = (BigInt(camp.raisedAmount || "0") + netAmount).toString();
       await Campaign.findOneAndUpdate({ campaignId }, { raisedAmount: newRaised });
     }
     persisted++;
