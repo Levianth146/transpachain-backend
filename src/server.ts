@@ -15,7 +15,13 @@ import proposalRoutes  from "./routes/proposals";
 import evidenceRoutes  from "./routes/evidence";
 import { startEventListener, getIndexerStatus } from "./indexer/eventListener";
 import { getRpcHealth } from "./lib/rpcProvider";
+import { withTimeout } from "./lib/withTimeout";
 import { errorHandler } from "./middleware/errorHandler";
+
+const HEALTH_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.HEALTH_CHECK_TIMEOUT_MS || 5000)
+);
 
 dotenv.config();
 
@@ -42,7 +48,10 @@ app.use(
 app.get("/health", async (_req, res) => {
   const indexer = getIndexerStatus();
   const rpc = getRpcHealth();
+  const mongoReady = mongoose.connection.readyState === 1;
+
   let onChainCampaigns: number | null = null;
+  let onChainCheckError: string | null = null;
   try {
     if (process.env.CHARITY_CORE_ADDRESS && rpc.status !== "down") {
       const { ethers } = await import("ethers");
@@ -53,24 +62,40 @@ app.get("/health", async (_req, res) => {
         ["function totalCampaigns() view returns (uint256)"],
         provider
       );
-      onChainCampaigns = Number(await core.totalCampaigns());
+      onChainCampaigns = Number(
+        await withTimeout(
+          core.totalCampaigns(),
+          HEALTH_TIMEOUT_MS,
+          "totalCampaigns"
+        )
+      );
     }
-  } catch {
-    /* RPC unavailable — health still returns */
+  } catch (err) {
+    onChainCheckError = String((err as { message?: string })?.message ?? err);
   }
 
-  const indexedCampaigns = await (async () => {
+  let indexedCampaigns: number | null = null;
+  let indexedCheckError: string | null = null;
+  if (mongoReady) {
     try {
       const { Campaign } = await import("./models/Campaign");
-      return await Campaign.countDocuments({});
-    } catch {
-      return null;
+      indexedCampaigns = await withTimeout(
+        Campaign.countDocuments({}),
+        HEALTH_TIMEOUT_MS,
+        "countDocuments"
+      );
+    } catch (err) {
+      indexedCheckError = String((err as { message?: string })?.message ?? err);
     }
-  })();
+  }
+
+  const degraded =
+    !mongoReady || rpc.status === "down" || onChainCheckError != null;
 
   res.json({
-    status: rpc.status === "down" ? "degraded" : "ok",
+    status: degraded ? "degraded" : "ok",
     chain: "sepolia",
+    mongo: { ready: mongoReady },
     dataSources: {
       indexed: "MongoDB — synced from chain events (may lag if RPC paused)",
       onChainReads: "Frontend wagmi/viem — live RPC",
@@ -81,6 +106,8 @@ app.get("/health", async (_req, res) => {
       ...indexer,
       indexedCampaigns,
       onChainCampaigns,
+      onChainCheckError,
+      indexedCheckError,
       inSync:
         onChainCampaigns != null &&
         indexedCampaigns != null &&
@@ -106,20 +133,27 @@ io.on("connection", (socket) => {
 // ─── Boot ─────────────────────────────────────────────────────
 async function main() {
   const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/transpachain";
-  await mongoose.connect(mongoUri);
-  console.log("[DB] MongoDB connected");
-
   const port = Number(process.env.PORT) || 3001;
+
   server.listen(port, () => console.log(`[Server] Running on http://localhost:${port}`));
 
-  // Indexer backfill can take minutes — run after HTTP is up so /health and API stay reachable
-  if ((process.env.ALCHEMY_SEPOLIA_URL || process.env.SEPOLIA_RPC_URL) && process.env.CHARITY_CORE_ADDRESS) {
-    void startEventListener(io).catch((err) =>
-      console.error("[Indexer] Event listener failed:", err)
-    );
-  } else {
-    console.warn("[Indexer] Env vars not set — skipping event listener");
-  }
+  void (async () => {
+    try {
+      await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 10_000 });
+      console.log("[DB] MongoDB connected");
+
+      if (
+        (process.env.ALCHEMY_SEPOLIA_URL || process.env.SEPOLIA_RPC_URL) &&
+        process.env.CHARITY_CORE_ADDRESS
+      ) {
+        await startEventListener(io);
+      } else {
+        console.warn("[Indexer] Env vars not set — skipping event listener");
+      }
+    } catch (err) {
+      console.error("[Boot] MongoDB or indexer startup failed:", err);
+    }
+  })();
 }
 
 main().catch(console.error);
