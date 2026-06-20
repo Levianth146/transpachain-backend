@@ -3,6 +3,11 @@ import { Campaign } from "../models/Campaign";
 import { Proposal } from "../models/Proposal";
 import { Donation } from "../models/Donation";
 import { campaignDisplayTitle } from "../indexer/fetchCampaignMeta";
+import {
+  deploymentDonationFilter,
+  getDeployFromBlock,
+  getOnChainTotalCampaigns,
+} from "../lib/indexedScope";
 
 const router = Router();
 
@@ -10,7 +15,7 @@ const router = Router();
  * Data architecture (see also frontend hooks):
  * - Metadata (title, image, description, orgName): Mongo/API — synced from IPFS at index time
  * - Amounts (raised, goal, escrow): always read on-chain in the UI via wagmi getCharityProgress
- * - Donor count: Mongo Donation.distinct("donor") — indexed from chain events; same source everywhere in UI
+ * - Donor count: Mongo Donation.distinct("donor") scoped to current deployment (DEPLOY_FROM_BLOCK + on-chain campaign ids)
  * - raisedAmount in Mongo is indexer cache only — never shown directly on campaign cards
  */
 
@@ -75,19 +80,25 @@ router.get("/", async (req: Request, res: Response) => {
   }
 });
 
-// GET /campaigns/stats — platform statistics (indexed / MongoDB)
+// GET /campaigns/stats — platform statistics (indexed / MongoDB, scoped to current deployment)
 router.get("/stats", async (req: Request, res: Response) => {
   try {
-    const [distinctCampaignIds, activeCampaigns, totalDonations, donorAgg] = await Promise.all([
-      Campaign.distinct("campaignId"),
-      Campaign.countDocuments({ status: 0 }),   // 0 = Active
-      Donation.find().lean(),
+    const onChainTotal = await getOnChainTotalCampaigns();
+    const donationScope = deploymentDonationFilter(onChainTotal);
+    const campaignScope =
+      onChainTotal <= 0
+        ? { campaignId: { $in: [] as number[] } }
+        : { campaignId: { $gte: 1, $lte: onChainTotal } };
+
+    const [activeCampaigns, totalDonations, donorAgg] = await Promise.all([
+      Campaign.countDocuments({ ...campaignScope, status: 0 }), // 0 = Active
+      Donation.find(donationScope).lean(),
       Donation.aggregate<{ _id: string }>([
-        { $match: { donor: { $exists: true, $nin: [null, ""] } } },
+        { $match: { ...donationScope, donor: { $exists: true, $nin: [null, ""] } } },
         { $group: { _id: { $toLower: "$donor" } } },
       ]),
     ]);
-    const totalCampaigns = distinctCampaignIds.length;
+    const totalCampaigns = onChainTotal;
     const countUniqueDonors = donorAgg.length;
 
     let totalDonatedEth = 0n;
@@ -117,7 +128,8 @@ router.get("/stats", async (req: Request, res: Response) => {
       totalDonatedGrossEth: totalDonatedGrossEth.toString(),
       totalDonatedGrossUsdc: totalDonatedGrossUsdc.toString(),
       countUniqueDonors,
-      note: "Campaign count uses distinct campaignId. Donor count = unique lowercase wallet addresses from indexed donations. Raised totals are on-chain in UI.",
+      deployFromBlock: getDeployFromBlock(),
+      note: "Campaign and donor counts scoped to current CharityCore (on-chain totalCampaigns + DEPLOY_FROM_BLOCK). Raised totals are on-chain in UI.",
     });
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
@@ -151,7 +163,12 @@ router.get("/:id/proposals", async (req: Request, res: Response) => {
 // GET /campaigns/:id/donations — list all donations
 router.get("/:id/donations", async (req: Request, res: Response) => {
   try {
-    const donations = await Donation.find({ campaignId: Number(req.params.id) }).sort({ timestamp: -1 }).lean();
+    const onChainTotal = await getOnChainTotalCampaigns();
+    const donationScope = deploymentDonationFilter(onChainTotal);
+    const donations = await Donation.find({
+      ...donationScope,
+      campaignId: Number(req.params.id),
+    }).sort({ timestamp: -1 }).lean();
     res.json(donations);
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
