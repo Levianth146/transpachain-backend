@@ -22,27 +22,29 @@ export async function reconcileCampaignRaisedAmounts(): Promise<ReconcileResult>
   const campaigns = await Campaign.find({}).select("campaignId raisedAmount").lean();
   const result: ReconcileResult = { checked: campaigns.length, updated: 0, errors: [] };
 
-  await withRpcFallback("reconcileCampaigns", async (provider) => {
-    const core = new ethers.Contract(address, CHARITY_CORE_ABI, provider);
-
-    for (const camp of campaigns) {
-      try {
-        const onChain = await core.getCampaign(camp.campaignId);
-        const onChainRaised = onChain[4].toString();
-        if (onChainRaised !== (camp.raisedAmount || "0")) {
-          await Campaign.findOneAndUpdate(
-            { campaignId: camp.campaignId },
-            { raisedAmount: onChainRaised }
-          );
-          result.updated++;
+  for (const camp of campaigns) {
+    try {
+      const onChainRaised = await withRpcFallback(
+        `reconcile-campaign-${camp.campaignId}`,
+        async (provider) => {
+          const core = new ethers.Contract(address, CHARITY_CORE_ABI, provider);
+          const onChain = await core.getCampaign(camp.campaignId);
+          return onChain[4].toString();
         }
-      } catch (err) {
-        result.errors.push(
-          `campaign ${camp.campaignId}: ${String((err as { message?: string })?.message ?? err)}`
+      );
+      if (onChainRaised !== (camp.raisedAmount || "0")) {
+        await Campaign.findOneAndUpdate(
+          { campaignId: camp.campaignId },
+          { raisedAmount: onChainRaised }
         );
+        result.updated++;
       }
+    } catch (err) {
+      result.errors.push(
+        `campaign ${camp.campaignId}: ${String((err as { message?: string })?.message ?? err)}`
+      );
     }
-  });
+  }
 
   return result;
 }

@@ -59,22 +59,29 @@ async function queryFilterChunked(
   contract: ethers.Contract,
   filter: ethers.ContractEventName,
   fromBlock: number,
-  toBlock: number
+  toBlock: number,
+  label: string
 ): Promise<ethers.Log[]> {
-  const logs: ethers.Log[] = [];
-  for (let start = fromBlock; start <= toBlock; start += LOG_CHUNK_SIZE) {
-    const end = Math.min(start + LOG_CHUNK_SIZE - 1, toBlock);
-    const chunk = await contract.queryFilter(filter, start, end);
-    logs.push(...chunk);
-    if (end < toBlock && CHUNK_DELAY_MS > 0) await sleep(CHUNK_DELAY_MS);
-  }
-  return logs;
+  return withRpcFallback(`poll-${label}`, async (provider) => {
+    const bound = new ethers.Contract(
+      contract.target as string,
+      contract.interface,
+      provider
+    );
+    const logs: ethers.Log[] = [];
+    for (let start = fromBlock; start <= toBlock; start += LOG_CHUNK_SIZE) {
+      const end = Math.min(start + LOG_CHUNK_SIZE - 1, toBlock);
+      const chunk = await bound.queryFilter(filter, start, end);
+      logs.push(...chunk);
+      if (end < toBlock && CHUNK_DELAY_MS > 0) await sleep(CHUNK_DELAY_MS);
+    }
+    return logs;
+  });
 }
 
 async function handleCampaignCreated(
   log: ethers.Log,
   core: ethers.Contract,
-  provider: ethers.JsonRpcProvider,
   io: IOServer
 ) {
   const parsed = core.interface.parseLog({ topics: log.topics as string[], data: log.data });
@@ -84,8 +91,14 @@ async function handleCampaignCreated(
   const goal = parsed.args[2];
   const deadline = Number(parsed.args[3]);
 
-  const coreFull = new ethers.Contract(process.env.CHARITY_CORE_ADDRESS!, CHARITY_CORE_FULL_ABI, provider);
-  const campaignData = await coreFull.getCampaign(campaignId);
+  const campaignData = await withRpcFallback(`getCampaign-${campaignId}`, async (p) => {
+    const coreFull = new ethers.Contract(
+      process.env.CHARITY_CORE_ADDRESS!,
+      CHARITY_CORE_FULL_ABI,
+      p
+    );
+    return coreFull.getCampaign(campaignId);
+  });
   const metadataCID = campaignData[2];
   const meta = await fetchCampaignMeta(metadataCID, campaignId);
 
@@ -172,7 +185,7 @@ async function processPollRange(
     {
       contract: core,
       filter: core.filters.CampaignCreated(),
-      fn: (log) => handleCampaignCreated(log, core, provider, io),
+      fn: (log) => handleCampaignCreated(log, core, io),
     },
     {
       contract: core,
@@ -376,9 +389,9 @@ async function processPollRange(
     },
   ];
 
-  for (const { contract, filter, fn } of handlers) {
+  for (const [i, { contract, filter, fn }] of handlers.entries()) {
     try {
-      const logs = await queryFilterChunked(contract, filter, fromBlock, toBlock);
+      const logs = await queryFilterChunked(contract, filter, fromBlock, toBlock, `handler-${i}`);
       for (const log of logs) {
         try {
           await fn(log);
