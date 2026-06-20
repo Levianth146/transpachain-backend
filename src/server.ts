@@ -143,6 +143,12 @@ async function main() {
       await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 10_000 });
       console.log("[DB] MongoDB connected");
 
+      const { Campaign } = await import("./models/Campaign");
+      const { VerifiedOrg } = await import("./models/VerifiedOrg");
+      await Campaign.syncIndexes();
+      await VerifiedOrg.syncIndexes();
+      console.log("[DB] Mongo indexes synced");
+
       if (
         (process.env.ALCHEMY_SEPOLIA_URL || process.env.SEPOLIA_RPC_URL) &&
         process.env.CHARITY_CORE_ADDRESS

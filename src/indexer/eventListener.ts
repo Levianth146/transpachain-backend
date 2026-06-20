@@ -16,6 +16,7 @@ import {
 } from "./indexerStatus";
 import { getProvider, netDonationAmount, withRpcFallback } from "../lib/rpcProvider";
 import { reconcileCampaigns } from "../lib/reconcileCampaigns";
+import { syncVerifiedOrgsFromEvents } from "../lib/reconcileVerifiedOrgs";
 
 const CHARITY_CORE_ABI = [
   "event CampaignCreated(uint256 indexed campaignId, address indexed org, uint256 goal, uint256 deadline)",
@@ -105,16 +106,20 @@ async function handleCampaignCreated(
   await Campaign.findOneAndUpdate(
     { campaignId },
     {
-      campaignId,
-      orgAddress: org,
-      metadataCID,
-      ...meta,
-      goalAmount: goal.toString(),
-      deadline,
-      totalMilestones: Number(campaignData[7]),
-      paymentToken: Number(campaignData[9]),
-      status: 0,
-      $setOnInsert: { raisedAmount: "0" },
+      $set: {
+        campaignId,
+        orgAddress: org,
+        metadataCID,
+        ...meta,
+        goalAmount: goal.toString(),
+        deadline,
+        totalMilestones: Number(campaignData[7]),
+        paymentToken: Number(campaignData[9]),
+      },
+      $setOnInsert: {
+        status: 0,
+        raisedAmount: "0",
+      },
     },
     { upsert: true }
   );
@@ -461,12 +466,28 @@ export async function startEventListener(io: IOServer) {
           `[Indexer] Synced ${reconcile.missing.created} missing campaign(s) (on-chain total=${reconcile.missing.onChainTotal})`
         );
       }
+      if (reconcile.dedupe.removed > 0) {
+        console.log(`[Indexer] Removed ${reconcile.dedupe.removed} duplicate campaign document(s)`);
+      }
+      if (reconcile.prune.removed > 0) {
+        console.log(`[Indexer] Pruned ${reconcile.prune.removed} orphan campaign document(s)`);
+      }
       if (reconcile.raised.updated > 0) {
         console.log(
           `[Indexer] Reconciled raisedAmount for ${reconcile.raised.updated}/${reconcile.raised.checked} campaigns`
         );
       }
-      const reconcileErrors = [...reconcile.missing.errors, ...reconcile.raised.errors];
+      const orgSync = await syncVerifiedOrgsFromEvents();
+      if (orgSync.upserted > 0) {
+        console.log(`[Indexer] Synced ${orgSync.upserted} verified org event(s) from blocks ${orgSync.fromBlock}-${orgSync.toBlock}`);
+      }
+      const reconcileErrors = [
+        ...reconcile.missing.errors,
+        ...reconcile.raised.errors,
+        ...reconcile.dedupe.errors,
+        ...reconcile.prune.errors,
+        ...orgSync.errors,
+      ];
       if (reconcileErrors.length > 0) {
         console.warn("[Indexer] Reconcile errors:", reconcileErrors.slice(0, 5));
       }
@@ -494,12 +515,28 @@ export async function startEventListener(io: IOServer) {
           `[Indexer] Synced ${reconcile.missing.created} missing campaign(s) on startup (on-chain total=${reconcile.missing.onChainTotal})`
         );
       }
+      if (reconcile.dedupe.removed > 0) {
+        console.log(`[Indexer] Removed ${reconcile.dedupe.removed} duplicate campaign document(s)`);
+      }
+      if (reconcile.prune.removed > 0) {
+        console.log(`[Indexer] Pruned ${reconcile.prune.removed} orphan campaign document(s)`);
+      }
       if (reconcile.raised.updated > 0) {
         console.log(
           `[Indexer] Reconciled raisedAmount for ${reconcile.raised.updated}/${reconcile.raised.checked} campaigns`
         );
       }
-      const reconcileErrors = [...reconcile.missing.errors, ...reconcile.raised.errors];
+      const orgSync = await syncVerifiedOrgsFromEvents();
+      if (orgSync.upserted > 0) {
+        console.log(`[Indexer] Synced ${orgSync.upserted} verified org event(s) from blocks ${orgSync.fromBlock}-${orgSync.toBlock}`);
+      }
+      const reconcileErrors = [
+        ...reconcile.missing.errors,
+        ...reconcile.raised.errors,
+        ...reconcile.dedupe.errors,
+        ...reconcile.prune.errors,
+        ...orgSync.errors,
+      ];
       if (reconcileErrors.length > 0) {
         console.warn("[Indexer] Reconcile errors:", reconcileErrors.slice(0, 5));
       }

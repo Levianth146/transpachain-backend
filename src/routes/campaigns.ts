@@ -6,12 +6,41 @@ import { campaignDisplayTitle } from "../indexer/fetchCampaignMeta";
 
 const router = Router();
 
+/**
+ * Data architecture (see also frontend hooks):
+ * - Metadata (title, image, description, orgName): Mongo/API — synced from IPFS at index time
+ * - Amounts (raised, goal, escrow): always read on-chain in the UI via wagmi getCharityProgress
+ * - Donor count: Mongo Donation.distinct("donor") — indexed from chain events; same source everywhere in UI
+ * - raisedAmount in Mongo is indexer cache only — never shown directly on campaign cards
+ */
+
 function withDataSource<T extends Record<string, unknown>>(doc: T, source: "indexed" = "indexed") {
   return { ...doc, _source: source };
 }
 
 function withDisplayTitle<T extends { campaignId: number; title?: string }>(campaign: T) {
   return withDataSource({ ...campaign, title: campaignDisplayTitle(campaign) });
+}
+
+/** Keep one row per campaignId (newest updatedAt wins). */
+function dedupeCampaignRows<T extends { campaignId: number; updatedAt?: Date }>(rows: T[]): T[] {
+  const byId = new Map<number, T>();
+  for (const row of rows) {
+    const id = Number(row.campaignId);
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, row);
+      continue;
+    }
+    const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+    const rowTime = row.updatedAt ? new Date(row.updatedAt).getTime() : 0;
+    if (rowTime >= existingTime) byId.set(id, row);
+  }
+  return Array.from(byId.values()).sort((a, b) => {
+    const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return bTime - aTime;
+  });
 }
 
 // GET /campaigns — list all (paginated, filterable)
@@ -25,10 +54,13 @@ router.get("/", async (req: Request, res: Response) => {
     if (category) filter.category = category;
     if (status !== undefined) filter.status = status;
 
-    const [campaigns, total] = await Promise.all([
+    const [rawCampaigns] = await Promise.all([
       Campaign.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
-      Campaign.countDocuments(filter),
     ]);
+
+    const campaigns = dedupeCampaignRows(rawCampaigns);
+    const distinctIds = await Campaign.distinct("campaignId", filter);
+    const total = distinctIds.length;
 
     res.json({
       campaigns: campaigns.map(withDisplayTitle),
@@ -36,6 +68,7 @@ router.get("/", async (req: Request, res: Response) => {
       page,
       pages: Math.ceil(total / limit),
       _source: "indexed",
+      _deduped: campaigns.length < rawCampaigns.length,
     });
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
@@ -45,12 +78,13 @@ router.get("/", async (req: Request, res: Response) => {
 // GET /campaigns/stats — platform statistics (indexed / MongoDB)
 router.get("/stats", async (req: Request, res: Response) => {
   try {
-    const [totalCampaigns, activeCampaigns, totalDonations, totalUniqueDonors] = await Promise.all([
-      Campaign.countDocuments({}),
+    const [distinctCampaignIds, activeCampaigns, totalDonations, totalUniqueDonors] = await Promise.all([
+      Campaign.distinct("campaignId"),
       Campaign.countDocuments({ status: 0 }),   // 0 = Active
       Donation.find().lean(),
       Donation.distinct("donor"),
     ]);
+    const totalCampaigns = distinctCampaignIds.length;
 
     let totalDonatedEth = 0n;
     let totalDonatedUsdc = 0n;
@@ -79,7 +113,7 @@ router.get("/stats", async (req: Request, res: Response) => {
       totalDonatedGrossEth: totalDonatedGrossEth.toString(),
       totalDonatedGrossUsdc: totalDonatedGrossUsdc.toString(),
       countUniqueDonors: totalUniqueDonors.length,
-      note: "raisedAmount and totals are net of 1% platform fee; donation.amount is gross sent",
+      note: "Campaign count uses distinct campaignId. Donor count from indexed donations. Raised totals are on-chain in UI.",
     });
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });

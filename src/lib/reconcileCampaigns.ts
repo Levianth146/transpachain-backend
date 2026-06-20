@@ -21,9 +21,82 @@ export interface SyncMissingResult {
   errors: string[];
 }
 
+export interface DedupeResult {
+  duplicateGroups: number;
+  removed: number;
+  errors: string[];
+}
+
+export interface PruneResult {
+  onChainTotal: number;
+  removed: number;
+  errors: string[];
+}
+
 export interface FullReconcileResult {
   missing: SyncMissingResult;
   raised: ReconcileResult;
+  dedupe: DedupeResult;
+  prune: PruneResult;
+}
+
+/** Remove duplicate Mongo rows sharing the same campaignId (keep newest updatedAt). */
+export async function dedupeDuplicateCampaigns(): Promise<DedupeResult> {
+  const result: DedupeResult = { duplicateGroups: 0, removed: 0, errors: [] };
+
+  try {
+    const groups = await Campaign.aggregate<{
+      _id: number;
+      count: number;
+      docs: Array<{ _id: unknown; updatedAt: Date }>;
+    }>([
+      { $sort: { updatedAt: -1 } },
+      { $group: { _id: "$campaignId", count: { $sum: 1 }, docs: { $push: { _id: "$_id", updatedAt: "$updatedAt" } } } },
+      { $match: { count: { $gt: 1 } } },
+    ]);
+
+    result.duplicateGroups = groups.length;
+
+    for (const group of groups) {
+      const [, ...stale] = group.docs;
+      const staleIds = stale.map((d) => d._id);
+      if (staleIds.length === 0) continue;
+      const deleted = await Campaign.deleteMany({ _id: { $in: staleIds } });
+      result.removed += deleted.deletedCount ?? 0;
+      console.log(`[Reconcile] Removed ${deleted.deletedCount} duplicate(s) for campaignId ${group._id}`);
+    }
+  } catch (err) {
+    result.errors.push(String((err as { message?: string })?.message ?? err));
+  }
+
+  return result;
+}
+
+/** Delete indexed campaigns whose id exceeds on-chain totalCampaigns(). */
+export async function pruneOrphanCampaigns(): Promise<PruneResult> {
+  const address = process.env.CHARITY_CORE_ADDRESS;
+  if (!address) {
+    return { onChainTotal: 0, removed: 0, errors: ["CHARITY_CORE_ADDRESS not set"] };
+  }
+
+  const onChainTotal = await withRpcFallback("prune-totalCampaigns", async (provider) => {
+    const core = new ethers.Contract(address, CHARITY_CORE_ABI, provider);
+    return Number(await core.totalCampaigns());
+  });
+
+  const result: PruneResult = { onChainTotal, removed: 0, errors: [] };
+
+  try {
+    const deleted = await Campaign.deleteMany({ campaignId: { $gt: onChainTotal } });
+    result.removed = deleted.deletedCount ?? 0;
+    if (result.removed > 0) {
+      console.log(`[Reconcile] Pruned ${result.removed} orphan campaign(s) above on-chain total ${onChainTotal}`);
+    }
+  } catch (err) {
+    result.errors.push(String((err as { message?: string })?.message ?? err));
+  }
+
+  return result;
 }
 
 /** Upsert campaigns that exist on-chain (ids 1..totalCampaigns) but are missing in Mongo. */
@@ -126,9 +199,11 @@ export async function reconcileCampaignRaisedAmounts(): Promise<ReconcileResult>
   return result;
 }
 
-/** Sync missing campaigns from chain, then reconcile raised amounts for all indexed campaigns. */
+/** Sync missing campaigns from chain, dedupe/prune Mongo, then reconcile raised amounts. */
 export async function reconcileCampaigns(): Promise<FullReconcileResult> {
+  const dedupe = await dedupeDuplicateCampaigns();
+  const prune = await pruneOrphanCampaigns();
   const missing = await syncMissingCampaigns();
   const raised = await reconcileCampaignRaisedAmounts();
-  return { missing, raised };
+  return { missing, raised, dedupe, prune };
 }

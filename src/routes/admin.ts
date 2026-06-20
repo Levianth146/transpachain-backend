@@ -4,6 +4,7 @@ import { OrgProfile } from "../models/OrgProfile";
 import { Proposal } from "../models/Proposal";
 import { Evidence } from "../models/Evidence";
 import { reconcileCampaigns } from "../lib/reconcileCampaigns";
+import { syncVerifiedOrgsFromEvents } from "../lib/reconcileVerifiedOrgs";
 
 const router = Router();
 
@@ -155,6 +156,19 @@ router.post("/reconcile-campaigns", async (_req: Request, res: Response) => {
   } catch (err) {
     res.status(500).json({
       error: "Reconcile failed",
+      detail: String((err as { message?: string })?.message ?? err),
+    });
+  }
+});
+
+// POST /admin/reconcile-verified-orgs — re-scan OrgVerified logs into Mongo
+router.post("/reconcile-verified-orgs", async (_req: Request, res: Response) => {
+  try {
+    const result = await syncVerifiedOrgsFromEvents();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({
+      error: "Verified org reconcile failed",
       detail: String((err as { message?: string })?.message ?? err),
     });
   }
