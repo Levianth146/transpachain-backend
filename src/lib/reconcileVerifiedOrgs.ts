@@ -1,5 +1,9 @@
 import { ethers } from "ethers";
 import { OrgProfile } from "../models/OrgProfile";
+import {
+  getOrgReconcileState,
+  saveOrgReconcileState,
+} from "../models/OrgReconcileState";
 import { VerifiedOrg } from "../models/VerifiedOrg";
 import { withRpcFallback } from "./rpcProvider";
 
@@ -8,13 +12,25 @@ const CHARITY_CORE_ABI = [
   "function isOrgVerified(address org) view returns (bool)",
 ];
 
-const LOG_CHUNK_SIZE = Math.max(1, Number(process.env.INDEXER_LOG_CHUNK_SIZE || 10));
-const CHUNK_DELAY_MS = Math.max(0, Number(process.env.INDEXER_CHUNK_DELAY_MS || 300));
+const ORG_LOG_CHUNK_SIZE = Math.max(
+  1,
+  Number(process.env.RECONCILE_ORG_CHUNK_SIZE || 2000)
+);
+const ORG_CHUNK_DELAY_MS = Math.max(
+  0,
+  Number(process.env.RECONCILE_ORG_CHUNK_DELAY_MS || process.env.INDEXER_CHUNK_DELAY_MS || 50)
+);
 const MAX_RETRIES = Math.max(1, Number(process.env.INDEXER_MAX_RETRIES || 4));
 const ORG_LOOKBACK_BLOCKS = Math.max(
-  1_000,
-  Number(process.env.RECONCILE_ORG_LOOKBACK_BLOCKS || 50_000)
+  100,
+  Number(process.env.RECONCILE_ORG_LOOKBACK_BLOCKS || 5_000)
 );
+const ORG_PROGRESS_EVERY_CHUNKS = Math.max(
+  1,
+  Number(process.env.RECONCILE_ORG_PROGRESS_EVERY_CHUNKS || 5)
+);
+/** When true (default), skip log scan after a completed full scan if isOrgVerified synced all known orgs and there are no new blocks. */
+const ORG_FAST_PATH = process.env.RECONCILE_ORG_FAST_PATH !== "0";
 
 let reconcileRunning = false;
 
@@ -56,26 +72,60 @@ async function queryFilterWithRetry(
 }
 
 export interface SyncVerifiedOrgsResult {
-  mode: "full" | "incremental";
+  mode: "full" | "incremental" | "fast-path";
   fromBlock: number;
   toBlock: number;
   eventsProcessed: number;
   upserted: number;
   knownOrgsChecked: number;
+  logScanSkipped: boolean;
   errors: string[];
 }
 
-function resolveFromBlock(toBlock: number): { fromBlock: number; mode: "full" | "incremental" } {
+interface ResolveScanRange {
+  fromBlock: number;
+  mode: "full" | "incremental";
+  skipLogScan: boolean;
+  fullScanComplete: boolean;
+}
+
+async function resolveScanRange(toBlock: number): Promise<ResolveScanRange> {
   const deployBlock = Number(process.env.DEPLOY_FROM_BLOCK || 0);
   const contractDeployBlock = Number(process.env.CONTRACT_DEPLOY_BLOCK || 11046235);
+  const state = await getOrgReconcileState();
 
   if (deployBlock > 0) {
-    return { fromBlock: deployBlock, mode: "full" };
+    return {
+      fromBlock: deployBlock,
+      mode: "full",
+      skipLogScan: false,
+      fullScanComplete: false,
+    };
+  }
+
+  if (state?.fullScanComplete && state.lastOrgReconcileBlock >= toBlock) {
+    return {
+      fromBlock: toBlock + 1,
+      mode: "incremental",
+      skipLogScan: true,
+      fullScanComplete: true,
+    };
+  }
+
+  if (state?.fullScanComplete && state.lastOrgReconcileBlock > 0) {
+    return {
+      fromBlock: state.lastOrgReconcileBlock + 1,
+      mode: "incremental",
+      skipLogScan: false,
+      fullScanComplete: true,
+    };
   }
 
   return {
     fromBlock: Math.max(contractDeployBlock, toBlock - ORG_LOOKBACK_BLOCKS),
     mode: "incremental",
+    skipLogScan: false,
+    fullScanComplete: false,
   };
 }
 
@@ -106,7 +156,9 @@ async function syncKnownOrgsViaContract(
     return result;
   }
 
-  console.log(`[ReconcileOrgs] Checking ${addresses.length} known org address(es) via isOrgVerified...`);
+  console.log(
+    `[ReconcileOrgs] Checking ${addresses.length} known org address(es) via isOrgVerified...`
+  );
 
   for (const org of addresses) {
     try {
@@ -121,12 +173,18 @@ async function syncKnownOrgsViaContract(
         { upsert: true }
       );
       result.upserted++;
+      console.log(`[ReconcileOrgs] isOrgVerified ${org}: ${verified ? "verified" : "not verified"}`);
     } catch (err) {
-      result.errors.push(
-        `${org}: ${String((err as { message?: string })?.message ?? err)}`
-      );
+      const message = String((err as { message?: string })?.message ?? err);
+      result.errors.push(`${org}: ${message}`);
+      console.warn(`[ReconcileOrgs] isOrgVerified ${org} failed: ${message}`);
     }
   }
+
+  console.log(
+    `[ReconcileOrgs] isOrgVerified complete: ${result.checked}/${addresses.length} checked, ${result.upserted} upserted` +
+      (result.errors.length ? `, ${result.errors.length} error(s)` : "")
+  );
 
   return result;
 }
@@ -152,10 +210,39 @@ async function upsertOrgFromLog(
   );
 }
 
+function canSkipLogScan(
+  scan: ResolveScanRange,
+  toBlock: number,
+  knownSync: { checked: number; errors: string[] }
+): { skip: boolean; reason: string } {
+  if (scan.skipLogScan) {
+    return { skip: true, reason: "already reconciled through chain head" };
+  }
+
+  const noNewBlocks = scan.fromBlock > toBlock;
+  if (noNewBlocks) {
+    return { skip: true, reason: "no new blocks since last reconcile" };
+  }
+
+  if (!ORG_FAST_PATH || knownSync.errors.length > 0 || knownSync.checked === 0) {
+    return { skip: false, reason: "" };
+  }
+
+  if (!scan.fullScanComplete) {
+    return {
+      skip: true,
+      reason: "fast path: skipping initial lookback (isOrgVerified synced known orgs)",
+    };
+  }
+
+  return { skip: false, reason: "" };
+}
+
 /**
  * Re-scan OrgVerified logs and upsert into Mongo.
  * CharityCore uses non-enumerable AccessControl — org list must come from events.
- * When DEPLOY_FROM_BLOCK=0, scans only recent blocks plus isOrgVerified for known addresses.
+ * Primary path: isOrgVerified() for known addresses (fast). Log scan is incremental
+ * from lastOrgReconcileBlock stored in Mongo, or a short lookback on first run.
  */
 export async function syncVerifiedOrgsFromEvents(): Promise<SyncVerifiedOrgsResult> {
   const address = process.env.CHARITY_CORE_ADDRESS;
@@ -167,6 +254,7 @@ export async function syncVerifiedOrgsFromEvents(): Promise<SyncVerifiedOrgsResu
     eventsProcessed: 0,
     upserted: 0,
     knownOrgsChecked: 0,
+    logScanSkipped: false,
     errors: [],
   };
 
@@ -179,14 +267,15 @@ export async function syncVerifiedOrgsFromEvents(): Promise<SyncVerifiedOrgsResu
     const toBlock = await withRpcFallback("sync-orgs-getBlockNumber", (p) => p.getBlockNumber());
     result.toBlock = toBlock;
 
-    const { fromBlock, mode } = resolveFromBlock(toBlock);
-    result.fromBlock = fromBlock;
-    result.mode = mode;
+    const scan = await resolveScanRange(toBlock);
+    result.fromBlock = scan.fromBlock;
+    result.mode = scan.mode;
 
-    const blockSpan = toBlock - fromBlock + 1;
+    const blockSpan = Math.max(0, toBlock - scan.fromBlock + 1);
     console.log(
-      `[ReconcileOrgs] Starting ${mode} scan blocks ${fromBlock}-${toBlock} ` +
-        `(${blockSpan} blocks, chunk=${LOG_CHUNK_SIZE}, lookback=${ORG_LOOKBACK_BLOCKS})`
+      `[ReconcileOrgs] Starting ${scan.mode} scan blocks ${scan.fromBlock}-${toBlock} ` +
+        `(${blockSpan} blocks, chunk=${ORG_LOG_CHUNK_SIZE}, lookback=${ORG_LOOKBACK_BLOCKS}, ` +
+        `persisted=${scan.fullScanComplete ? "yes" : "no"})`
     );
 
     const knownSync = await syncKnownOrgsViaContract(address);
@@ -194,38 +283,53 @@ export async function syncVerifiedOrgsFromEvents(): Promise<SyncVerifiedOrgsResu
     result.upserted += knownSync.upserted;
     result.errors.push(...knownSync.errors);
 
-    const logs = await withRpcFallback("sync-orgs-queryFilter", async (provider) => {
-      const core = new ethers.Contract(address, CHARITY_CORE_ABI, provider);
-      const filter = core.filters.OrgVerified();
-      const collected: ethers.Log[] = [];
+    const skipDecision = canSkipLogScan(scan, toBlock, knownSync);
 
-      for (let start = fromBlock; start <= toBlock; start += LOG_CHUNK_SIZE) {
-        const end = Math.min(start + LOG_CHUNK_SIZE - 1, toBlock);
-        const chunk = await queryFilterWithRetry(core, filter, start, end);
-        collected.push(...chunk);
-        if ((end - fromBlock) % (LOG_CHUNK_SIZE * 100) < LOG_CHUNK_SIZE) {
-          process.stdout.write(
-            `\r[ReconcileOrgs] Scanned through block ${end} (${collected.length} OrgVerified logs)   `
+    if (skipDecision.skip) {
+      result.logScanSkipped = true;
+      result.mode = "fast-path";
+      await saveOrgReconcileState(toBlock, true);
+      console.log(`[ReconcileOrgs] Skipping log scan (${skipDecision.reason})`);
+    } else {
+      const logs = await withRpcFallback("sync-orgs-queryFilter", async (provider) => {
+        const core = new ethers.Contract(address, CHARITY_CORE_ABI, provider);
+        const filter = core.filters.OrgVerified();
+        const collected: ethers.Log[] = [];
+        let chunkIndex = 0;
+
+        for (let start = scan.fromBlock; start <= toBlock; start += ORG_LOG_CHUNK_SIZE) {
+          const end = Math.min(start + ORG_LOG_CHUNK_SIZE - 1, toBlock);
+          const chunk = await queryFilterWithRetry(core, filter, start, end);
+          collected.push(...chunk);
+          chunkIndex++;
+
+          if (chunkIndex % ORG_PROGRESS_EVERY_CHUNKS === 0 || end >= toBlock) {
+            console.log(
+              `[ReconcileOrgs] Progress: scanned through block ${end} (${collected.length} OrgVerified log(s), chunk ${chunkIndex})`
+            );
+          }
+
+          if (end < toBlock && ORG_CHUNK_DELAY_MS > 0) await sleep(ORG_CHUNK_DELAY_MS);
+        }
+
+        console.log(`[ReconcileOrgs] Log scan found ${collected.length} OrgVerified event(s)`);
+        return collected;
+      });
+
+      result.eventsProcessed = logs.length;
+
+      for (const log of logs) {
+        try {
+          await upsertOrgFromLog(address, log);
+          result.upserted++;
+        } catch (err) {
+          result.errors.push(
+            `log ${log.transactionHash}: ${String((err as { message?: string })?.message ?? err)}`
           );
         }
-        if (end < toBlock && CHUNK_DELAY_MS > 0) await sleep(CHUNK_DELAY_MS);
       }
-      if (toBlock > fromBlock) process.stdout.write("\n");
-      console.log(`[ReconcileOrgs] Log scan found ${collected.length} OrgVerified event(s)`);
-      return collected;
-    });
 
-    result.eventsProcessed = logs.length;
-
-    for (const log of logs) {
-      try {
-        await upsertOrgFromLog(address, log);
-        result.upserted++;
-      } catch (err) {
-        result.errors.push(
-          `log ${log.transactionHash}: ${String((err as { message?: string })?.message ?? err)}`
-        );
-      }
+      await saveOrgReconcileState(toBlock, true);
     }
   } catch (err) {
     result.errors.push(String((err as { message?: string })?.message ?? err));
@@ -234,6 +338,7 @@ export async function syncVerifiedOrgsFromEvents(): Promise<SyncVerifiedOrgsResu
   console.log(
     `[ReconcileOrgs] Complete (${result.mode}) blocks ${result.fromBlock}-${result.toBlock}: ` +
       `${result.eventsProcessed} events, ${result.knownOrgsChecked} known orgs, ${result.upserted} upserts` +
+      (result.logScanSkipped ? ", log scan skipped" : "") +
       (result.errors.length ? `, ${result.errors.length} error(s)` : "")
   );
   if (result.errors.length > 0) {
