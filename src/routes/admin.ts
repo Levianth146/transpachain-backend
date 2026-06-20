@@ -4,7 +4,10 @@ import { OrgProfile } from "../models/OrgProfile";
 import { Proposal } from "../models/Proposal";
 import { Evidence } from "../models/Evidence";
 import { reconcileCampaigns } from "../lib/reconcileCampaigns";
-import { syncVerifiedOrgsFromEvents } from "../lib/reconcileVerifiedOrgs";
+import {
+  isVerifiedOrgReconcileRunning,
+  startVerifiedOrgReconcileInBackground,
+} from "../lib/reconcileVerifiedOrgs";
 
 const router = Router();
 
@@ -161,17 +164,22 @@ router.post("/reconcile-campaigns", async (_req: Request, res: Response) => {
   }
 });
 
-// POST /admin/reconcile-verified-orgs — re-scan OrgVerified logs into Mongo
+// POST /admin/reconcile-verified-orgs — async re-scan OrgVerified logs into Mongo
 router.post("/reconcile-verified-orgs", async (_req: Request, res: Response) => {
-  try {
-    const result = await syncVerifiedOrgsFromEvents();
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({
-      error: "Verified org reconcile failed",
-      detail: String((err as { message?: string })?.message ?? err),
-    });
+  if (isVerifiedOrgReconcileRunning()) {
+    return res.status(409).json({ error: "Verified org reconcile already in progress" });
   }
+
+  const started = startVerifiedOrgReconcileInBackground();
+  if (!started) {
+    return res.status(409).json({ error: "Verified org reconcile already in progress" });
+  }
+
+  res.status(202).json({
+    status: "accepted",
+    message:
+      "Verified org reconcile started in background. Check server logs or GET /admin/verified-orgs when complete.",
+  });
 });
 
 export default router;
