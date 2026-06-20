@@ -7,6 +7,8 @@ export interface IndexerStatus {
   lastProcessedBlock: number | null;
   backfillFromBlock: number | null;
   backfillComplete: boolean;
+  /** Events handled during historical backfill (separate from live poll counter). */
+  backfillEventsProcessed: number;
   eventsProcessed: number;
   lastError: string | null;
   lastErrorAt: string | null;
@@ -19,6 +21,7 @@ const status: IndexerStatus = {
   lastProcessedBlock: null,
   backfillFromBlock: null,
   backfillComplete: false,
+  backfillEventsProcessed: 0,
   eventsProcessed: 0,
   lastError: null,
   lastErrorAt: null,
@@ -39,10 +42,15 @@ export function setBackfillFromBlock(block: number) {
   status.backfillFromBlock = block;
 }
 
-export function markBackfillComplete(lastBlock: number) {
+export function markBackfillComplete(lastBlock: number, eventsProcessed = 0) {
   status.backfillComplete = true;
   status.lastProcessedBlock = lastBlock;
+  status.backfillEventsProcessed = eventsProcessed;
   status.phase = "polling";
+}
+
+export function addBackfillEvents(count: number) {
+  status.backfillEventsProcessed += count;
 }
 
 export function markPollSuccess(block: number, eventsThisPoll: number) {

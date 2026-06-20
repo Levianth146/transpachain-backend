@@ -3,6 +3,7 @@ import { VerifiedOrg } from "../models/VerifiedOrg";
 import { OrgProfile } from "../models/OrgProfile";
 import { Proposal } from "../models/Proposal";
 import { Evidence } from "../models/Evidence";
+import { reconcileCampaignRaisedAmounts } from "../lib/reconcileCampaigns";
 
 const router = Router();
 
@@ -143,6 +144,19 @@ router.get("/evidence", async (req: Request, res: Response) => {
     res.json({ evidence: items, total: items.length });
   } catch {
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /admin/reconcile-campaigns — sync Mongo raisedAmount from on-chain CharityCore
+router.post("/reconcile-campaigns", async (_req: Request, res: Response) => {
+  try {
+    const result = await reconcileCampaignRaisedAmounts();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({
+      error: "Reconcile failed",
+      detail: String((err as { message?: string })?.message ?? err),
+    });
   }
 });
 

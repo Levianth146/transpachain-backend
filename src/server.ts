@@ -55,16 +55,17 @@ app.get("/health", async (_req, res) => {
   try {
     if (process.env.CHARITY_CORE_ADDRESS && rpc.status !== "down") {
       const { ethers } = await import("ethers");
-      const { getProvider } = await import("./lib/rpcProvider");
-      const provider = getProvider();
-      const core = new ethers.Contract(
-        process.env.CHARITY_CORE_ADDRESS,
-        ["function totalCampaigns() view returns (uint256)"],
-        provider
-      );
+      const { withRpcFallback } = await import("./lib/rpcProvider");
       onChainCampaigns = Number(
         await withTimeout(
-          core.totalCampaigns(),
+          withRpcFallback("health-totalCampaigns", async (provider) => {
+            const core = new ethers.Contract(
+              process.env.CHARITY_CORE_ADDRESS!,
+              ["function totalCampaigns() view returns (uint256)"],
+              provider
+            );
+            return core.totalCampaigns();
+          }),
           HEALTH_TIMEOUT_MS,
           "totalCampaigns"
         )

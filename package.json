@@ -1,13 +1,14 @@
 {
   "name": "transpachain-backend",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "seed": "ts-node src/seed.ts"
+    "seed": "ts-node src/seed.ts",
+    "reconcile": "ts-node src/scripts/reconcileCampaigns.ts"
   },
   "dependencies": {
     "@pinata/sdk": "^2.1.0",

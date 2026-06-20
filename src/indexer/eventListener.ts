@@ -15,6 +15,7 @@ import {
   setIndexerPhase,
 } from "./indexerStatus";
 import { getProvider, netDonationAmount, withRpcFallback } from "../lib/rpcProvider";
+import { reconcileCampaignRaisedAmounts } from "../lib/reconcileCampaigns";
 
 const CHARITY_CORE_ABI = [
   "event CampaignCreated(uint256 indexed campaignId, address indexed org, uint256 goal, uint256 deadline)",
@@ -96,11 +97,11 @@ async function handleCampaignCreated(
       metadataCID,
       ...meta,
       goalAmount: goal.toString(),
-      raisedAmount: "0",
       deadline,
       totalMilestones: Number(campaignData[7]),
       paymentToken: Number(campaignData[9]),
       status: 0,
+      $setOnInsert: { raisedAmount: "0" },
     },
     { upsert: true }
   );
@@ -438,9 +439,16 @@ export async function startEventListener(io: IOServer) {
     setBackfillFromBlock(fromBlock);
     try {
       const current = await withRpcFallback("getBlockNumber", (p) => p.getBlockNumber());
-      await runHistoricalBackfill(provider, contracts, fromBlock, current);
+      const backfillEvents = await runHistoricalBackfill(provider, contracts, fromBlock, current);
       startPollBlock = current;
-      markBackfillComplete(current);
+      markBackfillComplete(current, backfillEvents);
+      const reconcile = await reconcileCampaignRaisedAmounts();
+      if (reconcile.updated > 0) {
+        console.log(`[Indexer] Reconciled raisedAmount for ${reconcile.updated}/${reconcile.checked} campaigns`);
+      }
+      if (reconcile.errors.length > 0) {
+        console.warn("[Indexer] Reconcile errors:", reconcile.errors.slice(0, 5));
+      }
       console.log(`[Indexer] Backfill complete — set DEPLOY_FROM_BLOCK=0 to skip on next restart`);
     } catch (err) {
       markIndexerError(err);
