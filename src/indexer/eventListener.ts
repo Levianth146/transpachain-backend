@@ -15,7 +15,7 @@ import {
   setIndexerPhase,
 } from "./indexerStatus";
 import { getProvider, netDonationAmount, withRpcFallback } from "../lib/rpcProvider";
-import { reconcileCampaignRaisedAmounts } from "../lib/reconcileCampaigns";
+import { reconcileCampaigns } from "../lib/reconcileCampaigns";
 
 const CHARITY_CORE_ABI = [
   "event CampaignCreated(uint256 indexed campaignId, address indexed org, uint256 goal, uint256 deadline)",
@@ -455,12 +455,20 @@ export async function startEventListener(io: IOServer) {
       const backfillEvents = await runHistoricalBackfill(provider, contracts, fromBlock, current);
       startPollBlock = current;
       markBackfillComplete(current, backfillEvents);
-      const reconcile = await reconcileCampaignRaisedAmounts();
-      if (reconcile.updated > 0) {
-        console.log(`[Indexer] Reconciled raisedAmount for ${reconcile.updated}/${reconcile.checked} campaigns`);
+      const reconcile = await reconcileCampaigns();
+      if (reconcile.missing.created > 0) {
+        console.log(
+          `[Indexer] Synced ${reconcile.missing.created} missing campaign(s) (on-chain total=${reconcile.missing.onChainTotal})`
+        );
       }
-      if (reconcile.errors.length > 0) {
-        console.warn("[Indexer] Reconcile errors:", reconcile.errors.slice(0, 5));
+      if (reconcile.raised.updated > 0) {
+        console.log(
+          `[Indexer] Reconciled raisedAmount for ${reconcile.raised.updated}/${reconcile.raised.checked} campaigns`
+        );
+      }
+      const reconcileErrors = [...reconcile.missing.errors, ...reconcile.raised.errors];
+      if (reconcileErrors.length > 0) {
+        console.warn("[Indexer] Reconcile errors:", reconcileErrors.slice(0, 5));
       }
       console.log(`[Indexer] Backfill complete — set DEPLOY_FROM_BLOCK=0 to skip on next restart`);
     } catch (err) {
@@ -480,6 +488,21 @@ export async function startEventListener(io: IOServer) {
     try {
       startPollBlock = await withRpcFallback("getBlockNumber", (p) => p.getBlockNumber());
       markBackfillComplete(startPollBlock);
+      const reconcile = await reconcileCampaigns();
+      if (reconcile.missing.created > 0) {
+        console.log(
+          `[Indexer] Synced ${reconcile.missing.created} missing campaign(s) on startup (on-chain total=${reconcile.missing.onChainTotal})`
+        );
+      }
+      if (reconcile.raised.updated > 0) {
+        console.log(
+          `[Indexer] Reconciled raisedAmount for ${reconcile.raised.updated}/${reconcile.raised.checked} campaigns`
+        );
+      }
+      const reconcileErrors = [...reconcile.missing.errors, ...reconcile.raised.errors];
+      if (reconcileErrors.length > 0) {
+        console.warn("[Indexer] Reconcile errors:", reconcileErrors.slice(0, 5));
+      }
     } catch (err) {
       markIndexerError(err);
     }
