@@ -8,13 +8,19 @@ import {
   isVerifiedOrgReconcileRunning,
   startVerifiedOrgReconcileInBackground,
 } from "../lib/reconcileVerifiedOrgs";
+import {
+  deploymentEvidenceFilter,
+  deploymentProposalFilter,
+  deploymentVerifiedOrgFilter,
+  getOnChainTotalCampaigns,
+} from "../lib/indexedScope";
 
 const router = Router();
 
 // GET /admin/verified-orgs — list all currently verified organizations
 router.get("/verified-orgs", async (_req: Request, res: Response) => {
   try {
-    const orgs = await VerifiedOrg.find({ verified: true })
+    const orgs = await VerifiedOrg.find({ verified: true, ...deploymentVerifiedOrgFilter() })
       .sort({ updatedAt: -1 })
       .lean();
 
@@ -66,8 +72,12 @@ router.patch("/org-profiles/:address", async (req: Request, res: Response) => {
 // GET /admin/proposals?approval=pending
 router.get("/proposals", async (req: Request, res: Response) => {
   try {
+    const onChainTotal = await getOnChainTotalCampaigns();
     const approval = (req.query.approval as string) || "pending";
-    const proposals = await Proposal.find({ approvalStatus: approval })
+    const proposals = await Proposal.find({
+      ...deploymentProposalFilter(onChainTotal),
+      approvalStatus: approval,
+    })
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
@@ -143,8 +153,12 @@ router.patch("/evidence/:id", async (req: Request, res: Response) => {
 // GET /admin/evidence?approval=pending
 router.get("/evidence", async (req: Request, res: Response) => {
   try {
+    const onChainTotal = await getOnChainTotalCampaigns();
     const approval = (req.query.approval as string) || "pending";
-    const items = await Evidence.find({ approvalStatus: approval }).sort({ submittedAt: -1 }).lean();
+    const items = await Evidence.find({
+      ...deploymentEvidenceFilter(onChainTotal),
+      approvalStatus: approval,
+    }).sort({ submittedAt: -1 }).lean();
     res.json({ evidence: items, total: items.length });
   } catch {
     res.status(500).json({ error: "Internal server error" });

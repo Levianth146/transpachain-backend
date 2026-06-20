@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import { Campaign } from "../models/Campaign";
 import { fetchCampaignMeta } from "../indexer/fetchCampaignMeta";
-import { pruneOrphanDonations } from "./indexedScope";
+import { pruneOrphanDonations, pruneOrphanEvidence, pruneOrphanProposals, pruneOrphanVerifiedOrgs } from "./indexedScope";
 import { withRpcFallback } from "./rpcProvider";
 
 const CHARITY_CORE_ABI = [
@@ -40,6 +40,9 @@ export interface FullReconcileResult {
   dedupe: DedupeResult;
   prune: PruneResult;
   donations: { onChainTotal: number; removed: number; errors: string[] };
+  proposals: { onChainTotal: number; removed: number; errors: string[] };
+  evidence: { onChainTotal: number; removed: number; errors: string[] };
+  verifiedOrgs: { removed: number; errors: string[] };
 }
 
 /** Remove duplicate Mongo rows sharing the same campaignId (keep newest updatedAt). */
@@ -206,7 +209,10 @@ export async function reconcileCampaigns(): Promise<FullReconcileResult> {
   const dedupe = await dedupeDuplicateCampaigns();
   const prune = await pruneOrphanCampaigns();
   const donations = await pruneOrphanDonations(prune.onChainTotal);
+  const proposals = await pruneOrphanProposals(prune.onChainTotal);
+  const evidence = await pruneOrphanEvidence(prune.onChainTotal);
+  const verifiedOrgs = await pruneOrphanVerifiedOrgs();
   const missing = await syncMissingCampaigns();
   const raised = await reconcileCampaignRaisedAmounts();
-  return { missing, raised, dedupe, prune, donations };
+  return { missing, raised, dedupe, prune, donations, proposals, evidence, verifiedOrgs };
 }

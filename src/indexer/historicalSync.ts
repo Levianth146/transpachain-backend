@@ -211,6 +211,7 @@ async function persistProposals(
       milestoneIndex: Number(parsed.args[2]),
       proofCID: parsed.args[3],
       endBlock: Number(parsed.args[4]),
+      blockNumber: log.blockNumber,
       txHash: log.transactionHash,
       approvalStatus: "pending",
     });

@@ -298,6 +298,7 @@ async function processPollRange(
           milestoneIndex: Number(p.args[2]),
           proofCID: p.args[3],
           endBlock: Number(p.args[4]),
+          blockNumber: log.blockNumber,
           txHash: log.transactionHash,
           approvalStatus: "pending",
         });

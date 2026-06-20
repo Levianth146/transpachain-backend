@@ -4,7 +4,9 @@ import { Proposal } from "../models/Proposal";
 import { Donation } from "../models/Donation";
 import { campaignDisplayTitle } from "../indexer/fetchCampaignMeta";
 import {
+  deploymentCampaignFilter,
   deploymentDonationFilter,
+  deploymentProposalFilter,
   getDeployFromBlock,
   getOnChainTotalCampaigns,
 } from "../lib/indexedScope";
@@ -48,14 +50,15 @@ function dedupeCampaignRows<T extends { campaignId: number; updatedAt?: Date }>(
   });
 }
 
-// GET /campaigns — list all (paginated, filterable)
+// GET /campaigns — list all (paginated, filterable, scoped to current deployment)
 router.get("/", async (req: Request, res: Response) => {
   try {
+    const onChainTotal = await getOnChainTotalCampaigns();
     const page         = Math.max(1, Number(req.query.page)  || 1);
     const limit        = Math.min(100, Number(req.query.limit) || 50);
     const category     = req.query.category as string | undefined;
     const status       = req.query.status !== undefined ? Number(req.query.status) : undefined;
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, unknown> = { ...deploymentCampaignFilter(onChainTotal) };
     if (category) filter.category = category;
     if (status !== undefined) filter.status = status;
 
@@ -73,6 +76,7 @@ router.get("/", async (req: Request, res: Response) => {
       page,
       pages: Math.ceil(total / limit),
       _source: "indexed",
+      onChainTotalCampaigns: onChainTotal,
       _deduped: campaigns.length < rawCampaigns.length,
     });
   } catch (err) {
@@ -139,7 +143,12 @@ router.get("/stats", async (req: Request, res: Response) => {
 // GET /campaigns/:id
 router.get("/:id", async (req: Request, res: Response) => {
   try {
-    const campaign = await Campaign.findOne({ campaignId: Number(req.params.id) }).lean();
+    const campaignId = Number(req.params.id);
+    const onChainTotal = await getOnChainTotalCampaigns();
+    if (onChainTotal <= 0 || campaignId < 1 || campaignId > onChainTotal) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+    const campaign = await Campaign.findOne({ campaignId }).lean();
     if (!campaign) return res.status(404).json({ error: "Campaign not found" });
     res.json(withDisplayTitle(campaign));
   } catch (err) {
@@ -150,8 +159,14 @@ router.get("/:id", async (req: Request, res: Response) => {
 // GET /campaigns/:id/proposals — active governance proposals
 router.get("/:id/proposals", async (req: Request, res: Response) => {
   try {
+    const campaignId = Number(req.params.id);
+    const onChainTotal = await getOnChainTotalCampaigns();
+    if (onChainTotal <= 0 || campaignId < 1 || campaignId > onChainTotal) {
+      return res.json([]);
+    }
     const proposals = await Proposal.find({
-      campaignId: Number(req.params.id),
+      ...deploymentProposalFilter(onChainTotal),
+      campaignId,
       $or: [{ approvalStatus: "approved" }, { approvalStatus: { $exists: false } }],
     }).sort({ createdAt: -1 }).lean();
     res.json(proposals);

@@ -11,6 +11,7 @@ export interface IProposal extends Document {
   abstainVotes:   number;
   endBlock:       number;
   executeAfter:   number;
+  blockNumber:    number;
   txHash:         string;
   approvalStatus: "pending" | "approved" | "rejected";
   closedByAdmin:  boolean;
@@ -31,6 +32,7 @@ const ProposalSchema = new Schema<IProposal>(
     abstainVotes:   { type: Number, default: 0 },
     endBlock:       { type: Number, required: true },
     executeAfter:   { type: Number, default: 0 },
+    blockNumber:    { type: Number, default: 0, index: true },
     txHash:         { type: String, required: true },
     approvalStatus: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
     closedByAdmin:  { type: Boolean, default: false },
