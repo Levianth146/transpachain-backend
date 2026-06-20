@@ -47,13 +47,12 @@ app.use(
 // ─── Routes ───────────────────────────────────────────────────
 app.get("/health", async (_req, res) => {
   const indexer = getIndexerStatus();
-  const rpc = getRpcHealth();
   const mongoReady = mongoose.connection.readyState === 1;
 
   let onChainCampaigns: number | null = null;
   let onChainCheckError: string | null = null;
   try {
-    if (process.env.CHARITY_CORE_ADDRESS && rpc.status !== "down") {
+    if (process.env.CHARITY_CORE_ADDRESS) {
       const { ethers } = await import("ethers");
       const { withRpcFallback } = await import("./lib/rpcProvider");
       onChainCampaigns = Number(
@@ -90,6 +89,7 @@ app.get("/health", async (_req, res) => {
     }
   }
 
+  const rpc = getRpcHealth();
   const degraded =
     !mongoReady || rpc.status === "down" || onChainCheckError != null;
 
