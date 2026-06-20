@@ -7,10 +7,10 @@ dotenv.config();
 async function main() {
   const mongoUri = process.env.MONGODB_URI || "mongodb://localhost:27017/transpachain";
   await mongoose.connect(mongoUri);
-  console.log("[Reconcile] Connected to MongoDB");
+  console.log("[ReconcileOrgs] Connected to MongoDB");
 
   const result = await syncVerifiedOrgsFromEvents();
-  console.log(JSON.stringify(result, null, 2));
+  console.log("[ReconcileOrgs] Result:", JSON.stringify(result, null, 2));
 
   await mongoose.disconnect();
   process.exit(result.errors.length > 0 ? 1 : 0);

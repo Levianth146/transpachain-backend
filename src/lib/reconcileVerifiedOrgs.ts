@@ -101,7 +101,12 @@ async function syncKnownOrgsViaContract(
   const addresses = await collectKnownOrgAddresses();
   const result = { checked: 0, upserted: 0, errors: [] as string[] };
 
-  if (addresses.length === 0) return result;
+  if (addresses.length === 0) {
+    console.log("[ReconcileOrgs] No known org addresses to check on-chain");
+    return result;
+  }
+
+  console.log(`[ReconcileOrgs] Checking ${addresses.length} known org address(es) via isOrgVerified...`);
 
   for (const org of addresses) {
     try {
@@ -178,6 +183,12 @@ export async function syncVerifiedOrgsFromEvents(): Promise<SyncVerifiedOrgsResu
     result.fromBlock = fromBlock;
     result.mode = mode;
 
+    const blockSpan = toBlock - fromBlock + 1;
+    console.log(
+      `[ReconcileOrgs] Starting ${mode} scan blocks ${fromBlock}-${toBlock} ` +
+        `(${blockSpan} blocks, chunk=${LOG_CHUNK_SIZE}, lookback=${ORG_LOOKBACK_BLOCKS})`
+    );
+
     const knownSync = await syncKnownOrgsViaContract(address);
     result.knownOrgsChecked = knownSync.checked;
     result.upserted += knownSync.upserted;
@@ -192,8 +203,15 @@ export async function syncVerifiedOrgsFromEvents(): Promise<SyncVerifiedOrgsResu
         const end = Math.min(start + LOG_CHUNK_SIZE - 1, toBlock);
         const chunk = await queryFilterWithRetry(core, filter, start, end);
         collected.push(...chunk);
+        if ((end - fromBlock) % (LOG_CHUNK_SIZE * 100) < LOG_CHUNK_SIZE) {
+          process.stdout.write(
+            `\r[ReconcileOrgs] Scanned through block ${end} (${collected.length} OrgVerified logs)   `
+          );
+        }
         if (end < toBlock && CHUNK_DELAY_MS > 0) await sleep(CHUNK_DELAY_MS);
       }
+      if (toBlock > fromBlock) process.stdout.write("\n");
+      console.log(`[ReconcileOrgs] Log scan found ${collected.length} OrgVerified event(s)`);
       return collected;
     });
 
@@ -213,6 +231,15 @@ export async function syncVerifiedOrgsFromEvents(): Promise<SyncVerifiedOrgsResu
     result.errors.push(String((err as { message?: string })?.message ?? err));
   }
 
+  console.log(
+    `[ReconcileOrgs] Complete (${result.mode}) blocks ${result.fromBlock}-${result.toBlock}: ` +
+      `${result.eventsProcessed} events, ${result.knownOrgsChecked} known orgs, ${result.upserted} upserts` +
+      (result.errors.length ? `, ${result.errors.length} error(s)` : "")
+  );
+  if (result.errors.length > 0) {
+    console.warn("[ReconcileOrgs] Errors:", result.errors.slice(0, 5));
+  }
+
   return result;
 }
 
@@ -226,15 +253,8 @@ export function startVerifiedOrgReconcileInBackground(): boolean {
   reconcileRunning = true;
 
   void syncVerifiedOrgsFromEvents()
-    .then((result) => {
-      console.log(
-        `[ReconcileOrgs] Background complete (${result.mode}) blocks ${result.fromBlock}-${result.toBlock}: ` +
-          `${result.eventsProcessed} events, ${result.knownOrgsChecked} known orgs, ${result.upserted} upserts` +
-          (result.errors.length ? `, ${result.errors.length} error(s)` : "")
-      );
-      if (result.errors.length > 0) {
-        console.warn("[ReconcileOrgs] Errors:", result.errors.slice(0, 5));
-      }
+    .then(() => {
+      console.log("[ReconcileOrgs] Background reconcile finished");
     })
     .catch((err) => {
       console.error("[ReconcileOrgs] Background failed:", err);
