@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import mongoose from "mongoose";
-import { reconcileCampaignRaisedAmounts } from "../lib/reconcileCampaigns";
+import { reconcileCampaigns } from "../lib/reconcileCampaigns";
 
 dotenv.config();
 
@@ -9,11 +9,13 @@ async function main() {
   await mongoose.connect(mongoUri);
   console.log("[Reconcile] Connected to MongoDB");
 
-  const result = await reconcileCampaignRaisedAmounts();
-  console.log("[Reconcile] Done:", result);
+  const result = await reconcileCampaigns();
+  console.log("[Reconcile] Missing campaigns:", result.missing);
+  console.log("[Reconcile] Raised amounts:", result.raised);
 
+  const hasErrors = result.missing.errors.length > 0 || result.raised.errors.length > 0;
   await mongoose.disconnect();
-  process.exit(result.errors.length > 0 ? 1 : 0);
+  process.exit(hasErrors ? 1 : 0);
 }
 
 main().catch((err) => {

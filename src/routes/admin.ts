@@ -3,7 +3,7 @@ import { VerifiedOrg } from "../models/VerifiedOrg";
 import { OrgProfile } from "../models/OrgProfile";
 import { Proposal } from "../models/Proposal";
 import { Evidence } from "../models/Evidence";
-import { reconcileCampaignRaisedAmounts } from "../lib/reconcileCampaigns";
+import { reconcileCampaigns } from "../lib/reconcileCampaigns";
 
 const router = Router();
 
@@ -147,10 +147,10 @@ router.get("/evidence", async (req: Request, res: Response) => {
   }
 });
 
-// POST /admin/reconcile-campaigns — sync Mongo raisedAmount from on-chain CharityCore
+// POST /admin/reconcile-campaigns — sync missing campaigns and raisedAmount from chain
 router.post("/reconcile-campaigns", async (_req: Request, res: Response) => {
   try {
-    const result = await reconcileCampaignRaisedAmounts();
+    const result = await reconcileCampaigns();
     res.json(result);
   } catch (err) {
     res.status(500).json({
