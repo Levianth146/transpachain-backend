@@ -26,7 +26,7 @@ router.get("/", async (req: Request, res: Response) => {
   }
 });
 
-// POST /evidence — org submits minh chứng (off-chain; on-chain proofCID separate)
+// POST /evidence — org submits milestone evidence (off-chain; on-chain proofCID is separate)
 router.post("/", async (req: Request, res: Response) => {
   try {
     const {

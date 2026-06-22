@@ -32,10 +32,13 @@ router.post("/metadata", async (req: Request, res: Response) => {
   }
 });
 
-// POST /ipfs/upload — upload file/metadata to Pinata
+// POST /ipfs/upload — upload file to Pinata
 // FormData: file field
-router.post("/upload", upload.single("file") ,async (req: Request, res: Response) => {
+router.post("/upload", upload.single("file"), async (req: Request, res: Response) => {
   try {
+    if (!process.env.PINATA_API_KEY || !process.env.PINATA_SECRET_KEY) {
+      return res.status(503).json({ error: "IPFS upload is not configured (missing Pinata API keys)" });
+    }
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
