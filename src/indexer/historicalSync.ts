@@ -16,7 +16,7 @@ const CHARITY_CORE_EVENTS_ABI = [
 ];
 
 const VAULT_EVENTS_ABI = [
-  "event DonationReceived(uint256 indexed campaignId, address indexed donor, uint256 amount, uint8 tokenType)",
+  "event DonationReceived(uint256 indexed campaignId, address indexed donor, uint256 grossAmount, uint256 netAmount, uint256 fee, uint8 tokenType)",
 ];
 
 const DAO_EVENTS_ABI = [
@@ -160,9 +160,14 @@ async function persistDonations(
     const campaignId = Number(parsed.args[0]);
     const donor = String(parsed.args[1]).toLowerCase();
     const grossAmount = parsed.args[2];
-    const tokenType = Number(parsed.args[3]);
+    const netAmountArg = parsed.args[3];
+    const feeArg = parsed.args[4];
+    const tokenType = Number(parsed.args[5] ?? parsed.args[3]);
     const txHash = log.transactionHash;
-    const netAmount = netDonationAmount(BigInt(grossAmount.toString()));
+    const netAmount =
+      netAmountArg != null
+        ? BigInt(netAmountArg.toString())
+        : netDonationAmount(BigInt(grossAmount.toString()));
 
     const exists = await Donation.findOne({ txHash });
     if (exists) continue;

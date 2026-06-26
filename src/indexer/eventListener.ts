@@ -30,7 +30,7 @@ const CHARITY_CORE_FULL_ABI = [
   "function getCampaign(uint256) view returns (tuple(uint256,address,string,uint256,uint256,uint256,uint8,uint8,uint8,uint8,string,uint256,uint256))",
 ];
 const VAULT_ABI = [
-  "event DonationReceived(uint256 indexed campaignId, address indexed donor, uint256 amount, uint8 tokenType)",
+  "event DonationReceived(uint256 indexed campaignId, address indexed donor, uint256 grossAmount, uint256 netAmount, uint256 fee, uint8 tokenType)",
   "event FundsReleased(uint256 indexed campaignId, uint8 milestoneIndex, uint256 amount, address recipient)",
   "event RefundProcessed(uint256 indexed campaignId, address indexed donor, uint256 amount)",
 ];
@@ -132,9 +132,18 @@ async function handleDonationReceived(log: ethers.Log, vault: ethers.Contract, i
   const campaignId = Number(parsed.args[0]);
   const donor = String(parsed.args[1]).toLowerCase();
   const grossAmount = parsed.args[2];
-  const tokenType = Number(parsed.args[3]);
+  const netAmountArg = parsed.args[3];
+  const feeArg = parsed.args[4];
+  const tokenType = Number(parsed.args[5] ?? parsed.args[3]);
   const txHash = log.transactionHash;
-  const netAmount = netDonationAmount(BigInt(grossAmount.toString()));
+  const netAmount =
+    netAmountArg != null
+      ? BigInt(netAmountArg.toString())
+      : netDonationAmount(BigInt(grossAmount.toString()));
+  const fee =
+    feeArg != null
+      ? BigInt(feeArg.toString())
+      : BigInt(grossAmount.toString()) - netAmount;
 
   const exists = await Donation.findOne({ txHash });
   if (exists) return;
@@ -166,7 +175,9 @@ async function handleDonationReceived(log: ethers.Log, vault: ethers.Contract, i
     campaignId,
     donor,
     amount: grossAmount.toString(),
+    grossAmount: grossAmount.toString(),
     netAmount: netAmount.toString(),
+    fee: fee.toString(),
     tokenType,
   });
   io.emit("campaignUpdated", { campaignId });
